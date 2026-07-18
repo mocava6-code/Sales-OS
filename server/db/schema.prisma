@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  OWNER
+  SALESPERSON
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  FOLLOW_UP
+  WON
+  LOST
+}
+
+enum LeadPriority {
+  NORMAL
+  HIGH
+}
+
+enum ConversationChannel {
+  WHATSAPP
+  CALL
+  IN_PERSON
+  OTHER
+}
+
+enum ConversationSource {
+  MANUAL_PASTE
+  MANUAL_ENTRY
+}
+
+enum ConversationStatus {
+  NEEDS_REPLY
+  WAITING_ON_CUSTOMER
+  CLOSED
+}
+
+enum EntryDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum FollowUpStatus {
+  PENDING
+  DONE
+  SNOOZED
+}
+
+enum KnowledgeCategory {
+  PRODUCT
+  COMPATIBILITY
+  OBJECTION
+  COMMERCIAL_POLICY
+  PROMOTION
+  FAQ
+  RECOMMENDED_RESPONSE
+  LOGISTICS
+}
+
+// ── Models ───────────────────────────────────────────────────────────────
+
+model Business {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  // Logical pointer to the owning User, intentionally not an enforced FK:
+  // Business and User each require the other to exist, so a hard relation
+  // in both directions would make the very first insert impossible.
+  ownerUserId String?
+  createdAt   DateTime @default(now())
+
+  users          User[]
+  leads          Lead[]
+  conversations  Conversation[]
+  knowledgeItems KnowledgeItem[]
+  dailyInsights  DailyInsight[]
+
+  @@map("businesses")
+}
+
+model User {
+  id         String   @id @default(uuid())
+  // Nullable, set exactly once on first successful login. Never used to look
+  // up a user — that's authUserId's job once it's populated.
+  authUserId String?  @unique
+  // Always stored normalized (trim + lowercase). The only field used to
+  // match a freshly authenticated Supabase user to a seeded record.
+  email      String   @unique
+  name       String
+  role       UserRole
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  createdAt  DateTime @default(now())
+
+  assignedLeads        Lead[]              @relation("LeadAssignee")
+  followUps            FollowUp[]
+  conversationsCreated Conversation[]      @relation("ConversationCreatedBy")
+  knowledgeItemsCreated KnowledgeItem[]
+  dailyInsights         DailyInsight[]
+
+  @@map("users")
+}
+
+model Lead {
+  id               String       @id @default(uuid())
+  businessId       String
+  business         Business     @relation(fields: [businessId], references: [id])
+  name             String
+  phone            String
+  status           LeadStatus   @default(NEW)
+  priority         LeadPriority @default(NORMAL)
+  assignedToUserId String?
+  assignedTo       User?        @relation("LeadAssignee", fields: [assignedToUserId], references: [id])
+  lastContactAt    DateTime?
+  createdAt        DateTime     @default(now())
+
+  conversations Conversation[]
+  followUps     FollowUp[]
+
+  @@index([businessId])
+  @@map("leads")
+}
+
+model Conversation {
+  id                 String              @id @default(uuid())
+  businessId         String
+  business           Business            @relation(fields: [businessId], references: [id])
+  leadId             String
+  lead               Lead                @relation(fields: [leadId], references: [id])
+  channel            ConversationChannel @default(WHATSAPP)
+  source             ConversationSource
+  status             ConversationStatus  @default(NEEDS_REPLY)
+  lastEntryAt        DateTime
+  lastEntryDirection EntryDirection
+  // Populated by a later milestone (AI summarization). Always null for now.
+  aiSummary          String?
+  createdByUserId    String
+  createdBy          User                @relation("ConversationCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  entries         ConversationEntry[]
+  insightEvidence InsightEvidence[]
+
+  @@index([businessId])
+  @@index([leadId])
+  @@map("conversations")
+}
+
+model ConversationEntry {
+  id             String         @id @default(uuid())
+  conversationId String
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      EntryDirection
+  content        String
+  occurredAt     DateTime
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+  @@map("conversation_entries")
+}
+
+model FollowUp {
+  id        String         @id @default(uuid())
+  leadId    String
+  lead      Lead           @relation(fields: [leadId], references: [id])
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  dueAt     DateTime
+  status    FollowUpStatus @default(PENDING)
+  note      String?
+  createdAt DateTime       @default(now())
+
+  @@index([leadId])
+  @@index([userId])
+  @@map("follow_ups")
+}
+
+model KnowledgeItem {
+  id              String            @id @default(uuid())
+  businessId      String
+  business        Business          @relation(fields: [businessId], references: [id])
+  title           String
+  content         String
+  category        KnowledgeCategory
+  tags            String[]
+  createdByUserId String
+  createdBy       User              @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([businessId])
+  @@map("knowledge_items")
+}
+
+// Empty/unused this milestone — schema only. No AI generation is implemented
+// yet, so no rows are ever created here.
+model DailyInsight {
+  id              String   @id @default(uuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id])
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  insightDate     DateTime
+  observation     String
+  recommendation  String
+  suggestedAction String
+  createdAt       DateTime @default(now())
+
+  evidence InsightEvidence[]
+
+  @@index([businessId, userId, insightDate])
+  @@map("daily_insights")
+}
+
+model InsightEvidence {
+  id             String       @id @default(uuid())
+  dailyInsightId String
+  dailyInsight   DailyInsight @relation(fields: [dailyInsightId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  excerpt        String?
+  createdAt      DateTime     @default(now())
+
+  @@map("insight_evidence")
+}
