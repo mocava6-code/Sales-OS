@@ -101,7 +101,13 @@ export type ApprovalRequirement =
   | "ADMIN_APPROVAL_REQUIRED"
   | "HUMAN_INFORMATION_REQUIRED";
 
-export type DecisionStatus = "PROPOSED" | "APPROVED" | "REJECTED" | "EXECUTED" | "CANCELLED";
+/**
+ * OVERRIDDEN is distinct from REJECTED: a rejection means the advisor said
+ * no and did nothing; an override means the advisor acted, just not on
+ * Kori's recommendation (see server/orchestration/decision-workflows.ts'
+ * recordAdvisorOverride).
+ */
+export type DecisionStatus = "PROPOSED" | "APPROVED" | "REJECTED" | "EXECUTED" | "CANCELLED" | "OVERRIDDEN";
 
 /**
  * Observable commercial behavior only — never a protected or sensitive

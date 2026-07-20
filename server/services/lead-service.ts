@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db/client";
+import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
 import type { LeadInput } from "@/lib/validations/lead";
 
 export async function listLeads(businessId: string) {
@@ -59,4 +60,21 @@ export async function assertLeadBelongsToBusiness(businessId: string, leadId: st
   }
 
   return lead;
+}
+
+/**
+ * "Identify customer" for an inbound WhatsApp message (server/whatsapp/gateway.ts)
+ * — matches by exact phone string within the tenant, creating a bare-minimum
+ * Lead if this number has never messaged before. `phone` must already be
+ * normalized (see server/whatsapp/message-normalizer.ts) — this function
+ * does no format coercion of its own, so the same number always matches the
+ * same Lead regardless of caller.
+ */
+export async function findOrCreateLeadByPhone(businessId: string, phone: string, db: PrismaClientOrTransaction = prisma) {
+  const existing = await db.lead.findFirst({ where: { businessId, phone } });
+  if (existing) return existing;
+
+  return db.lead.create({
+    data: { businessId, phone, name: phone, priority: "NORMAL" },
+  });
 }

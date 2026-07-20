@@ -37,6 +37,10 @@ enum ConversationChannel {
 enum ConversationSource {
   MANUAL_PASTE
   MANUAL_ENTRY
+  // WhatsApp Business Integration v1 — populated by the webhook ingestion
+  // pipeline (server/whatsapp/gateway.ts), never by a human. Anticipated by
+  // name in ARCHITECTURE.md §4/§7 before this phase existed.
+  WHATSAPP_SYNCED
 }
 
 enum ConversationStatus {
@@ -48,6 +52,22 @@ enum ConversationStatus {
 enum EntryDirection {
   INBOUND
   OUTBOUND
+}
+
+// The content shape of a ConversationEntry. TEXT covers every non-WhatsApp
+// entry (manual paste/entry always produce text) as well as WhatsApp text
+// messages; the rest are WhatsApp-specific media/structured message types
+// normalized by server/whatsapp/message-normalizer.ts.
+enum ConversationEntryMessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  STICKER
+  CONTACT
+  LOCATION
+  UNKNOWN
 }
 
 enum FollowUpStatus {
@@ -67,6 +87,103 @@ enum KnowledgeCategory {
   LOGISTICS
 }
 
+// Mirrors server/intelligence/decision/types.ts DecisionType exactly — the
+// Decision Engine's own vocabulary, not reinvented here.
+enum DecisionType {
+  RESPOND_TO_CUSTOMER
+  ASK_CLARIFYING_QUESTION
+  FOLLOW_UP
+  ESCALATE_TO_HUMAN
+  RECOMMEND_SALES_APPROACH
+  WARN_ADVISOR
+  ORGANIZE_CONVERSATION
+  WAIT
+  NO_ACTION
+}
+
+enum DecisionRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DecisionImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum DecisionApprovalRequirement {
+  AUTO_ALLOWED
+  ADVISOR_APPROVAL_REQUIRED
+  ADMIN_APPROVAL_REQUIRED
+  HUMAN_INFORMATION_REQUIRED
+}
+
+// Fast-query denormalization on DecisionRecord — the DecisionEvent log is
+// the source of truth (see § Event history in ARCHITECTURE.md / Phase D report).
+//
+// OVERRIDDEN is distinct from REJECTED: a rejection means the advisor said
+// no and did nothing; an override means the advisor acted, just not on
+// Kori's recommendation. Historical REJECTED rows are never reinterpreted
+// as OVERRIDDEN — this is a new terminal value, not a rename.
+enum DecisionStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXECUTED
+  CANCELLED
+  OVERRIDDEN
+}
+
+// Append-only lifecycle log. Almost a strict superset of DecisionStatus (so
+// most status transitions can also be recorded as an event) plus downstream
+// commercial-outcome-adjacent events — except OVERRIDDEN, which is
+// deliberately never recorded as a bare "OVERRIDDEN" event: recordAdvisorOverride
+// always fires the more specific ADVISOR_OVERRIDDEN instead, which already
+// carries strictly more information. Never aggregated — see DecisionEvent model.
+enum DecisionEventType {
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXECUTED
+  CANCELLED
+  CUSTOMER_REPLIED
+  FOLLOW_UP_SENT
+  SALE_CLOSED
+  SALE_LOST
+  ADVISOR_OVERRIDDEN
+  KORI_OVERRIDDEN
+}
+
+enum AdvisorActionType {
+  FOLLOWED_RECOMMENDATION
+  IGNORED_RECOMMENDATION
+  PARTIALLY_FOLLOWED_RECOMMENDATION
+  CUSTOM_ACTION
+}
+
+enum OutcomeType {
+  CUSTOMER_REPLIED
+  MEETING_SCHEDULED
+  FOLLOW_UP_SENT
+  QUOTATION_REQUESTED
+  QUOTATION_SENT
+  SALE_CLOSED
+  SALE_LOST
+  ABANDONED
+}
+
+// What actually produced an outcome — required for SALE_CLOSED/SALE_LOST,
+// optional elsewhere. Never inferred; always supplied explicitly by the
+// caller recording the outcome (see server/orchestration/outcome-attribution-policy.ts).
+enum OutcomeAttribution {
+  KORI_RECOMMENDATION
+  ADVISOR_ALTERNATIVE
+  UNATTRIBUTED
+}
+
 // ── Models ───────────────────────────────────────────────────────────────
 
 model Business {
@@ -83,6 +200,11 @@ model Business {
   conversations  Conversation[]
   knowledgeItems KnowledgeItem[]
   dailyInsights  DailyInsight[]
+  conversationSnapshots ConversationSnapshot[]
+  decisionRecords       DecisionRecord[]
+  conversationAnalysisRuns ConversationAnalysisRun[]
+  whatsappPhoneNumbers     WhatsAppPhoneNumber[]
+  pendingWhatsAppMessages  PendingWhatsAppMessage[]
 
   @@map("businesses")
 }
@@ -106,6 +228,8 @@ model User {
   conversationsCreated Conversation[]      @relation("ConversationCreatedBy")
   knowledgeItemsCreated KnowledgeItem[]
   dailyInsights         DailyInsight[]
+  advisorActions         AdvisorAction[]
+  queuedWhatsAppMessages PendingWhatsAppMessage[]
 
   @@map("users")
 }
@@ -143,13 +267,25 @@ model Conversation {
   lastEntryDirection EntryDirection
   // Populated by a later milestone (AI summarization). Always null for now.
   aiSummary          String?
-  createdByUserId    String
-  createdBy          User                @relation("ConversationCreatedBy", fields: [createdByUserId], references: [id])
+  // Nullable since WhatsApp Business Integration v1: a conversation created
+  // by an inbound webhook has no human creator. Manual-entry conversations
+  // (source = MANUAL_PASTE/MANUAL_ENTRY) always still set this.
+  createdByUserId    String?
+  createdBy          User?               @relation("ConversationCreatedBy", fields: [createdByUserId], references: [id])
+  // Which of the business's WhatsApp numbers this thread belongs to — set
+  // once at creation from the inbound webhook's resolved number, reused for
+  // every outbound reply in the thread. Null for non-WhatsApp conversations.
+  whatsappPhoneNumberId String?
+  whatsappPhoneNumber   WhatsAppPhoneNumber? @relation(fields: [whatsappPhoneNumberId], references: [id])
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
-  entries         ConversationEntry[]
-  insightEvidence InsightEvidence[]
+  entries                ConversationEntry[]
+  insightEvidence        InsightEvidence[]
+  snapshots              ConversationSnapshot[]
+  decisionRecords        DecisionRecord[]
+  analysisRuns           ConversationAnalysisRun[]
+  pendingWhatsAppMessages PendingWhatsAppMessage[]
 
   @@index([businessId])
   @@index([leadId])
@@ -157,13 +293,33 @@ model Conversation {
 }
 
 model ConversationEntry {
-  id             String         @id @default(uuid())
+  id             String                       @id @default(uuid())
   conversationId String
-  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   Conversation                 @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   direction      EntryDirection
+  // Human-readable summary — the message text itself, or a caption/fallback
+  // label for non-text content (e.g. "[image]"). Always populated.
   content        String
+  messageType    ConversationEntryMessageType @default(TEXT)
   occurredAt     DateTime
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime                     @default(now())
+
+  // WhatsApp Business Integration v1 fields — all null for manually-logged
+  // entries. externalId is the idempotency key for inbound webhook
+  // processing (server/whatsapp/gateway.ts): a duplicate wamid safely no-ops
+  // on the unique constraint instead of creating a second entry.
+  externalId       String? @unique
+  mediaId          String?
+  mediaMimeType    String?
+  mediaFilename    String?
+  mediaSizeBytes   Int?
+  mediaCaption     String?
+  // wamid of the message this one replies to/quotes, if any — not a FK
+  // (the quoted message may not exist in our DB, e.g. it predates ingestion).
+  quotedExternalId String?
+  // Raw Meta payload node for this message, preserved verbatim for
+  // debugging — never read by any normal application code path.
+  rawPayload       Json?
 
   @@index([conversationId])
   @@map("conversation_entries")
@@ -232,4 +388,299 @@ model InsightEvidence {
   createdAt      DateTime     @default(now())
 
   @@map("insight_evidence")
+}
+
+// ── Kori's memory (Phase D) ─────────────────────────────────────────────
+//
+// Persists Decision Engine input/output history so a future Learning Engine
+// can be built entirely from stored evidence. Every model here is
+// append-only in practice: only DecisionRecord.status is ever updated after
+// creation (a denormalized fast-query field — see DecisionEvent), nothing
+// else in this section is ever mutated or deleted by application code.
+
+// One row per Conversation Intelligence Engine run (server/intelligence/
+// analyze-conversation.ts). Verbatim persistence of ConversationIntelligenceResult
+// (server/intelligence/types.ts) — never edited after creation; re-analyzing
+// a conversation creates a new row, not an update, so the history of what
+// Kori knew *at each point in time* is fully reconstructable.
+model ConversationSnapshot {
+  id             String       @id @default(uuid())
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  // ConversationIntelligenceResult, split field-by-field rather than stored
+  // as one blob so each concern (verified vs. inferred vs. unknown) stays
+  // independently queryable — mirrors the type-level separation already
+  // enforced in server/intelligence/types.ts.
+  customerIdentification Json
+  facts                  Json
+  inferences             Json
+  objections             Json
+  missingInformation     Json
+  warnings               Json
+  draftResponse          Json?
+  overallConfidence      Float
+
+  // Versioning (EngineRunMetadata) — never overwritten; reproduces exactly
+  // which engine schema / prompt / model produced this snapshot.
+  engineSchemaVersion Int
+  promptVersion       String
+  aiProvider          String
+  modelName           String
+  analyzedAt          DateTime
+
+  createdAt DateTime @default(now())
+
+  decisionRecords DecisionRecord[]
+
+  @@index([conversationId, createdAt])
+  @@index([businessId])
+  @@map("conversation_snapshots")
+}
+
+// One row per KoriDecision (server/intelligence/decision/types.ts) ever
+// proposed. Everything except `status` is immutable after creation — a
+// decision is never edited, only ever superseded by a new proposal or
+// followed by DecisionEvent/AdvisorAction/Outcome rows.
+model DecisionRecord {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  // Context reference — which conversation this decision was about, and
+  // (when the engine ran on a persisted snapshot) exactly which
+  // ConversationSnapshot informed it.
+  conversationId         String
+  conversation           Conversation          @relation(fields: [conversationId], references: [id])
+  conversationSnapshotId String?
+  conversationSnapshot   ConversationSnapshot? @relation(fields: [conversationSnapshotId], references: [id])
+
+  // The Decision Engine's own deterministic id (makeDecisionId in
+  // server/intelligence/decision/types.ts) — kept for correlation with
+  // engine output/logs. Not this table's primary key: the engine's id is a
+  // pure function of (conversationId, type, index), so re-running the
+  // engine on the same conversation can legitimately repeat it, and every
+  // run must still persist as its own historical row.
+  engineDecisionId String
+
+  type                DecisionType
+  title               String
+  recommendation      String
+  objective           String
+  reasoning           String
+  evidence            Json
+  assumptions         String[]
+  missingInformation  Json
+  alternatives        Json
+  confidence          Float
+  riskLevel           DecisionRiskLevel
+  impactLevel         DecisionImpactLevel
+  approvalRequirement DecisionApprovalRequirement
+  suggestedAction     Json
+  customerProfile     Json?
+  warnings            Json
+
+  // Fast-query denormalization of current status. DecisionEvent is the
+  // source of truth for the full history of how it got here.
+  status DecisionStatus @default(PROPOSED)
+
+  // Versioning (KoriDecisionMetadata) — never overwritten.
+  engineSchemaVersion                        Int
+  promptVersion                              String
+  aiProvider                                 String
+  modelName                                  String
+  decidedAt                                  DateTime
+  sourceConversationIntelligenceGeneratedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  events                  DecisionEvent[]
+  advisorActions          AdvisorAction[]
+  outcomes                Outcome[]
+  pendingWhatsAppMessages PendingWhatsAppMessage[]
+
+  @@index([conversationId])
+  @@index([businessId])
+  @@index([status])
+  @@index([conversationSnapshotId])
+  @@map("decision_records")
+}
+
+// Append-only chronological log of every status transition and downstream
+// commercial event for a decision. Never aggregated or summarized in place —
+// a future Learning Engine reconstructs history by replaying these rows.
+model DecisionEvent {
+  id               String         @id @default(uuid())
+  decisionRecordId String
+  decisionRecord   DecisionRecord @relation(fields: [decisionRecordId], references: [id])
+  eventType        DecisionEventType
+  note             String?
+  occurredAt       DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+
+  @@index([decisionRecordId, occurredAt])
+  @@map("decision_events")
+}
+
+// What the human advisor actually did in response to a decision. Append-only
+// — a decision can accumulate more than one AdvisorAction over time (e.g.
+// "partially followed" now, "custom action" logged later).
+model AdvisorAction {
+  id               String         @id @default(uuid())
+  decisionRecordId String
+  decisionRecord   DecisionRecord @relation(fields: [decisionRecordId], references: [id])
+  actionType       AdvisorActionType
+  advisorUserId    String?
+  advisor          User?          @relation(fields: [advisorUserId], references: [id])
+  notes            String?
+  occurredAt       DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+
+  @@index([decisionRecordId])
+  @@map("advisor_actions")
+}
+
+// The commercial result that followed a decision. Append-only — a single
+// decision's thread can accumulate a sequence of outcomes over time
+// (customer replied, then a quotation was sent, then the sale closed).
+model Outcome {
+  id               String              @id @default(uuid())
+  decisionRecordId String
+  decisionRecord   DecisionRecord      @relation(fields: [decisionRecordId], references: [id])
+  outcomeType      OutcomeType
+  // Required for SALE_CLOSED/SALE_LOST, optional otherwise — enforced at the
+  // orchestration boundary (server/orchestration/outcome-attribution-policy.ts),
+  // not by a DB constraint, since the requirement is conditional on outcomeType.
+  attribution      OutcomeAttribution?
+  notes            String?
+  occurredAt       DateTime            @default(now())
+  createdAt        DateTime            @default(now())
+
+  @@index([decisionRecordId])
+  @@map("outcomes")
+}
+
+// Idempotency guard for analyzeConversationAndCreateDecisions (Kori
+// Application Integration v1) — its mere existence means "a run is
+// currently in progress for this conversation." Created before the AI
+// calls, deleted in a finally block after (see
+// server/application/analysis-run-lock.ts). No status/history value here —
+// this is disposable coordination state, not commercial memory.
+model ConversationAnalysisRun {
+  id             String       @id @default(uuid())
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  startedAt      DateTime     @default(now())
+
+  @@unique([conversationId])
+  @@map("conversation_analysis_runs")
+}
+
+// ── WhatsApp Business Integration v1 ────────────────────────────────────
+//
+// Meta-specific concerns (webhook parsing, signature verification, Graph
+// API calls) live entirely in server/whatsapp/**, never here — these models
+// are the persistence surface that layer writes to via server/whatsapp/queue.ts
+// and server/services/conversation-service.ts. Kori (server/intelligence,
+// server/orchestration) never references any of this.
+
+// A WhatsApp Business Cloud API phone number registered to a business.
+// One Meta app/webhook can receive events for many numbers across many
+// businesses — phoneNumberId (from the webhook payload's metadata object)
+// is how an inbound event resolves back to a business.
+model WhatsAppPhoneNumber {
+  id                 String   @id @default(uuid())
+  businessId         String
+  business           Business @relation(fields: [businessId], references: [id])
+  // Meta's phone_number_id — the actual routing key for both inbound
+  // (webhook metadata.phone_number_id) and outbound (Graph API URL segment).
+  phoneNumberId      String   @unique
+  displayPhoneNumber String
+  // WhatsApp Business Account id this number belongs to (Meta's waba_id).
+  wabaId             String
+  label              String?
+  createdAt          DateTime @default(now())
+
+  pendingMessages PendingWhatsAppMessage[]
+  conversations   Conversation[]
+
+  @@index([businessId])
+  @@map("whatsapp_phone_numbers")
+}
+
+enum PendingWhatsAppMessageStatus {
+  READY
+  WAITING_APPROVAL
+  SENT
+  FAILED
+  CANCELLED
+}
+
+// Kori never sends WhatsApp messages — it only generates recommendations
+// (DecisionRecord). A PendingWhatsAppMessage is the actual message content
+// an advisor has queued, optionally traced back to the decision that
+// suggested it. server/whatsapp/sender.ts consumes READY rows only; nothing
+// in this phase moves a row to READY/SENT except an explicit server action
+// or sender call — no background worker, no automatic sending.
+model PendingWhatsAppMessage {
+  id                    String                       @id @default(uuid())
+  businessId            String
+  business              Business                     @relation(fields: [businessId], references: [id])
+  conversationId        String
+  conversation          Conversation                 @relation(fields: [conversationId], references: [id])
+  whatsappPhoneNumberId String
+  whatsappPhoneNumber   WhatsAppPhoneNumber          @relation(fields: [whatsappPhoneNumberId], references: [id])
+  toPhoneNumber         String
+  body                  String
+  status                PendingWhatsAppMessageStatus @default(WAITING_APPROVAL)
+  // Optional — set when this reply originated from a Kori recommendation
+  // the advisor approved, rather than a fully manual reply.
+  decisionRecordId String?
+  decisionRecord   DecisionRecord? @relation(fields: [decisionRecordId], references: [id])
+  createdByUserId  String?
+  createdBy        User?           @relation(fields: [createdByUserId], references: [id])
+  // Meta's wamid, set once the sender successfully calls the Graph API.
+  externalId     String? @unique
+  failureReason  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  sentAt         DateTime?
+
+  statusEvents WhatsAppMessageStatusEvent[]
+
+  @@index([businessId])
+  @@index([conversationId])
+  @@index([status])
+  @@map("pending_whatsapp_messages")
+}
+
+enum WhatsAppMessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// Chronological delivery-status history for a sent message (Meta's status
+// webhooks: sent -> delivered -> read, or failed). One row per distinct
+// status per message — a re-delivered identical status webhook safely no-ops
+// on the unique constraint rather than duplicating history.
+model WhatsAppMessageStatusEvent {
+  id               String                 @id @default(uuid())
+  pendingMessageId String
+  pendingMessage   PendingWhatsAppMessage @relation(fields: [pendingMessageId], references: [id])
+  status           WhatsAppMessageStatus
+  occurredAt       DateTime
+  errorCode        String?
+  errorMessage     String?
+  rawPayload       Json?
+  createdAt        DateTime               @default(now())
+
+  @@unique([pendingMessageId, status])
+  @@index([pendingMessageId])
+  @@map("whatsapp_message_status_events")
 }

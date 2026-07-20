@@ -26,7 +26,7 @@ export const approvalRequirementSchema = z.enum([
   "ADMIN_APPROVAL_REQUIRED",
   "HUMAN_INFORMATION_REQUIRED",
 ]);
-export const decisionStatusSchema = z.enum(["PROPOSED", "APPROVED", "REJECTED", "EXECUTED", "CANCELLED"]);
+export const decisionStatusSchema = z.enum(["PROPOSED", "APPROVED", "REJECTED", "EXECUTED", "CANCELLED", "OVERRIDDEN"]);
 
 export const commercialProfileTraitSchema = z.enum([
   "PRICE_FOCUSED",
