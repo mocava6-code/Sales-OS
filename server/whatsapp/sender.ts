@@ -1,9 +1,29 @@
 import "server-only";
 
 import { prisma } from "@/server/db/client";
+import type { PrismaClient } from "@/server/db/generated/client";
+import {
+  recordDomainEvent as recordDomainEventDefault,
+  type RecordDomainEventInput,
+  type RecordDomainEventResult,
+} from "@/server/orchestration/record-domain-event";
+import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
 import { InvalidPendingMessageStatusTransitionError, PendingMessageNotFoundError, WhatsAppSendFailedError } from "./errors";
 import { findPendingMessageById, markMessageFailed, markMessageSent } from "./queue";
+
+/**
+ * Bound to the same `db` sendReadyMessage was given — never a
+ * composition-root singleton — so a test-injected db (see sender.db.test.ts)
+ * is what Observer Mode's write targets too, not the app's real DATABASE_URL.
+ * The cast is safe: sendReadyMessage is never called with an existing
+ * Prisma.TransactionClient (there'd be nothing to nest a fresh
+ * event-recording transaction inside) — only the app's shared PrismaClient
+ * singleton or a test PrismaClient, both real PrismaTransactionRunner targets.
+ */
+function defaultRecordDomainEvent(input: RecordDomainEventInput, db: PrismaClientOrTransaction): Promise<RecordDomainEventResult> {
+  return recordDomainEventDefault(input, { transactionRunner: new PrismaTransactionRunner(db as PrismaClient) });
+}
 
 const DEFAULT_API_VERSION = "v21.0";
 const DEFAULT_BASE_URL = "https://graph.facebook.com";
@@ -92,6 +112,8 @@ export function createWhatsAppSenderClientFromEnv(): WhatsAppSenderClient {
 export interface SendReadyMessageDependencies {
   client: WhatsAppSenderClient;
   db?: PrismaClientOrTransaction;
+  /** Observer Mode v1 — best-effort, never allowed to fail the send it's describing. */
+  recordDomainEvent?: (input: RecordDomainEventInput) => Promise<RecordDomainEventResult>;
 }
 
 /**
@@ -105,6 +127,7 @@ export async function sendReadyMessage(
   dependencies: SendReadyMessageDependencies,
 ): Promise<Awaited<ReturnType<typeof markMessageSent>>> {
   const db = dependencies.db ?? prisma;
+  const recordDomainEvent = dependencies.recordDomainEvent ?? ((input: RecordDomainEventInput) => defaultRecordDomainEvent(input, db));
 
   const message = await findPendingMessageById(pendingMessageId, db);
   if (!message) {
@@ -125,7 +148,29 @@ export async function sendReadyMessage(
       to: message.toPhoneNumber,
       body: message.body,
     });
-    return await markMessageSent(pendingMessageId, externalId, db);
+    const sent = await markMessageSent(pendingMessageId, externalId, db);
+
+    // Observer Mode v1 — record MESSAGE_SENT. Best-effort: a failure here
+    // must never surface as a send failure, since the WhatsApp message and
+    // its ConversationEntry are already durably persisted at this point.
+    try {
+      await recordDomainEvent({
+        event: {
+          type: "MESSAGE_SENT",
+          businessId: message.businessId,
+          conversationId: message.conversationId,
+          conversationEntryId: sent.conversationEntryId,
+          content: message.body,
+          externalId,
+          occurredAt: sent.sentAt ?? new Date(),
+        },
+        conversationEntryId: sent.conversationEntryId,
+      });
+    } catch {
+      // Swallowed deliberately — see doc comment above.
+    }
+
+    return sent;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown error sending the WhatsApp message.";
     await markMessageFailed(pendingMessageId, reason, db);

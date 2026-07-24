@@ -1,9 +1,26 @@
 import { prisma } from "@/server/db/client";
 import { Prisma } from "@/server/db/generated/client";
 import type { ConversationEntryMessageType, EntryDirection, PrismaClient } from "@/server/db/generated/client";
+import {
+  recordDomainEvent as recordDomainEventDefault,
+  type RecordDomainEventInput,
+  type RecordDomainEventResult,
+} from "@/server/orchestration/record-domain-event";
+import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
 import type { ConversationInput } from "@/lib/validations/conversation";
 import { assertLeadBelongsToBusiness } from "./lead-service";
+
+/**
+ * Bound to the same `db` the caller passed in — never a composition-root
+ * singleton — same reasoning as server/whatsapp/gateway.ts's/sender.ts's
+ * defaultRecordDomainEvent. The cast is safe for the same reason as
+ * sender.ts's: closeConversation is never called with an existing
+ * Prisma.TransactionClient in this codebase.
+ */
+function defaultRecordDomainEvent(input: RecordDomainEventInput, db: PrismaClientOrTransaction): Promise<RecordDomainEventResult> {
+  return recordDomainEventDefault(input, { transactionRunner: new PrismaTransactionRunner(db as PrismaClient) });
+}
 
 export async function listUnansweredConversations(businessId: string) {
   return prisma.conversation.findMany({
@@ -15,6 +32,12 @@ export async function listUnansweredConversations(businessId: string) {
     include: { lead: true },
     orderBy: { lastEntryAt: "asc" },
   });
+}
+
+export interface FindOrCreateWhatsAppConversationResult {
+  id: string;
+  /** Lets the caller (server/whatsapp/gateway.ts) know whether to emit a CONVERSATION_CREATED domain event. */
+  created: boolean;
 }
 
 /**
@@ -29,14 +52,14 @@ export async function findOrCreateWhatsAppConversation(
   leadId: string,
   whatsappPhoneNumberId: string,
   db: PrismaClientOrTransaction = prisma,
-) {
+): Promise<FindOrCreateWhatsAppConversationResult> {
   const existing = await db.conversation.findFirst({
     where: { businessId, leadId, channel: "WHATSAPP" },
     orderBy: { lastEntryAt: "desc" },
   });
-  if (existing) return existing;
+  if (existing) return { id: existing.id, created: false };
 
-  return db.conversation.create({
+  const created = await db.conversation.create({
     data: {
       businessId,
       leadId,
@@ -50,6 +73,7 @@ export async function findOrCreateWhatsAppConversation(
       whatsappPhoneNumberId,
     },
   });
+  return { id: created.id, created: true };
 }
 
 export interface WhatsAppEntryInput {
@@ -149,4 +173,47 @@ export async function logConversation(
       },
     },
   });
+}
+
+export interface CloseConversationDependencies {
+  /** Observer Mode v1 — best-effort, never allowed to fail the close itself. */
+  recordDomainEvent?: (input: RecordDomainEventInput) => Promise<RecordDomainEventResult>;
+}
+
+/**
+ * No caller exists yet — the CLOSED status value has been in the schema
+ * unused since WhatsApp Business Integration v1 (see
+ * ConversationStatus.CLOSED's doc comment), and there's still no "close
+ * conversation" UI/action in this sprint. This function is the trigger
+ * point CUSTOMER_GHOSTED detection needs once one is built: it closes the
+ * conversation and records a CONVERSATION_CLOSED domain event so the
+ * Observation Engine can flag an advisor's unanswered last message.
+ */
+export async function closeConversation(
+  conversationId: string,
+  db: PrismaClientOrTransaction = prisma,
+  dependencies: CloseConversationDependencies = {},
+) {
+  const conversation = await db.conversation.update({
+    where: { id: conversationId },
+    data: { status: "CLOSED" },
+  });
+
+  const recordDomainEvent = dependencies.recordDomainEvent ?? ((input: RecordDomainEventInput) => defaultRecordDomainEvent(input, db));
+  try {
+    await recordDomainEvent({
+      event: {
+        type: "CONVERSATION_CLOSED",
+        businessId: conversation.businessId,
+        conversationId: conversation.id,
+        lastEntryDirection: conversation.lastEntryDirection,
+        lastEntryAt: conversation.lastEntryAt,
+        occurredAt: new Date(),
+      },
+    });
+  } catch {
+    // Swallowed deliberately — see CloseConversationDependencies doc comment.
+  }
+
+  return conversation;
 }

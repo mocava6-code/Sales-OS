@@ -18,6 +18,8 @@ import type { Evidence, EngineWarning, MissingFieldEntry } from "@/server/intell
 import type { AnalyzeConversationAndCreateDecisionsResult } from "@/server/orchestration/types";
 import type { OutcomeAttribution, OutcomeRecord, OutcomeType, SavedDecisionRecord } from "@/server/persistence/types";
 import type { PendingWhatsAppMessage as PendingWhatsAppMessageRow } from "@/server/db/generated/client";
+import type { AuthorizedConversationForObserverConsole } from "./access-control";
+import type { ConversationTimelineDTO, DomainEventTimelineEntryDTO } from "@/server/observer-console/types";
 
 export interface DecisionSummaryDTO {
   id: string;
@@ -145,5 +147,26 @@ export function toPendingWhatsAppMessageSummaryDTO(row: PendingWhatsAppMessageRo
     failureReason: row.failureReason,
     createdAt: row.createdAt,
     sentAt: row.sentAt,
+  };
+}
+
+/**
+ * The only place the tenant-scoped conversation header (access-control.ts,
+ * a real Prisma lookup) and the Observer Console read-model's assembled
+ * events (server/observer-console/build-conversation-timeline.ts, Prisma-
+ * free) are combined into one object — neither of those two modules knows
+ * about the other's half of ConversationTimelineDTO.
+ */
+export function toConversationTimelineDTO(
+  header: AuthorizedConversationForObserverConsole,
+  events: DomainEventTimelineEntryDTO[],
+): ConversationTimelineDTO {
+  return {
+    conversationId: header.id,
+    leadName: header.leadName,
+    leadPhone: header.leadPhone,
+    channel: header.channel,
+    status: header.status,
+    events,
   };
 }

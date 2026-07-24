@@ -13,14 +13,22 @@
 import type {
   AdvisorActionRecord,
   AppendDecisionEventInput,
+  ConversationEntryRecord,
+  ConversationListItem,
+  ConversationSearchFilters,
   DecisionEventRecord,
+  ObservationTypeAggregate,
   OutcomeRecord,
   RecordAdvisorActionInput,
   RecordOutcomeInput,
   SaveConversationSnapshotInput,
   SaveDecisionInput,
+  SaveDomainEventInput,
+  SaveObservationInput,
   SavedConversationSnapshot,
   SavedDecisionRecord,
+  SavedDomainEventRecord,
+  SavedObservationRecord,
 } from "./types";
 import type { DecisionStatus } from "../intelligence/decision/types";
 
@@ -65,4 +73,44 @@ export interface OutcomeRepository {
   record(input: RecordOutcomeInput): Promise<OutcomeRecord>;
   /** Chronological, oldest first. */
   listForDecision(decisionRecordId: string): Promise<OutcomeRecord[]>;
+}
+
+/** Append-only: no update or delete method exists on this interface by design. */
+export interface DomainEventRepository {
+  append(input: SaveDomainEventInput): Promise<SavedDomainEventRecord>;
+  /** Chronological, oldest first. */
+  listForConversation(conversationId: string): Promise<SavedDomainEventRecord[]>;
+}
+
+/** Append-only: no update or delete method exists on this interface by design. */
+export interface ObservationRepository {
+  save(input: SaveObservationInput): Promise<SavedObservationRecord>;
+  /** Chronological — occurredAt asc, then id asc as a tie-break for deterministic ordering. */
+  listForConversation(conversationId: string): Promise<SavedObservationRecord[]>;
+  /** Read-only aggregate for Observer Console's catalog view (ARCHITECTURE.md §20) — never used by KoriUnitOfWork. */
+  aggregateByType(businessId: string): Promise<ObservationTypeAggregate[]>;
+}
+
+// --- Observer Console v1: read-only, never added to KoriUnitOfWork ----------
+//
+// Neither repository below participates in a transaction — both are pure
+// reads with no atomicity requirement, consumed only by
+// server/observer-console/** (ARCHITECTURE.md §20).
+
+export interface ConversationSearchRepository {
+  /**
+   * Always capped at MAX_CONVERSATION_SEARCH_RESULTS regardless of what's
+   * requested — enforced inside the implementation via Math.min, never
+   * left to the caller to self-limit. Ordered lastEntryAt desc (most
+   * recently active conversation first).
+   */
+  search(businessId: string, filters: ConversationSearchFilters, limit?: number): Promise<ConversationListItem[]>;
+}
+
+export interface ConversationEntryRepository {
+  /**
+   * Chronological — occurredAt asc, then id asc. Never selects rawPayload —
+   * see ConversationEntryRecord's doc comment in ./types.
+   */
+  listForConversation(conversationId: string): Promise<ConversationEntryRecord[]>;
 }

@@ -55,6 +55,10 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
         await db!.decisionEvent.deleteMany({ where: { decisionRecord: { conversationId: { in: conversationIds } } } });
         await db!.decisionRecord.deleteMany({ where: { conversationId: { in: conversationIds } } });
         await db!.conversationSnapshot.deleteMany({ where: { conversationId: { in: conversationIds } } });
+        // Observer Mode v1 — observations reference domainEvents, so they're
+        // deleted first even though both hang directly off the conversation.
+        await db!.observation.deleteMany({ where: { conversationId: { in: conversationIds } } });
+        await db!.domainEvent.deleteMany({ where: { conversationId: { in: conversationIds } } });
         await db!.conversationEntry.deleteMany({ where: { conversationId: { in: conversationIds } } });
       }
       await db!.conversation.deleteMany({ where: { leadId: lead.id } });

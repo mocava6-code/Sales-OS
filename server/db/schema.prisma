@@ -205,6 +205,8 @@ model Business {
   conversationAnalysisRuns ConversationAnalysisRun[]
   whatsappPhoneNumbers     WhatsAppPhoneNumber[]
   pendingWhatsAppMessages  PendingWhatsAppMessage[]
+  domainEvents             DomainEvent[]
+  observations             Observation[]
 
   @@map("businesses")
 }
@@ -286,6 +288,8 @@ model Conversation {
   decisionRecords        DecisionRecord[]
   analysisRuns           ConversationAnalysisRun[]
   pendingWhatsAppMessages PendingWhatsAppMessage[]
+  domainEvents            DomainEvent[]
+  observations            Observation[]
 
   @@index([businessId])
   @@index([leadId])
@@ -663,6 +667,83 @@ enum WhatsAppMessageStatus {
   DELIVERED
   READ
   FAILED
+}
+
+// ── Observer Mode v1 ────────────────────────────────────────────────────
+//
+// Kori's second lens on a conversation, independent of the AI-driven
+// Conversation Intelligence / Decision Engine pipeline (§11-§15 above).
+// Every inbound/outbound WhatsApp message becomes an immutable DomainEvent;
+// the deterministic Observation Engine (server/intelligence/observation/)
+// consumes those events and tags typed commercial signals. Read-only —
+// nothing here decides or sends anything. See ARCHITECTURE.md §19.
+
+enum DomainEventType {
+  CONVERSATION_CREATED
+  MESSAGE_RECEIVED
+  MESSAGE_SENT
+  ATTACHMENT_RECEIVED
+  CONVERSATION_CLOSED
+}
+
+// Immutable, append-only log of everything that happens to a Conversation.
+// The Observation Engine consumes these; a future Memory/Learning
+// Engine/BI module reads the same log without touching server/whatsapp or
+// server/orchestration.
+model DomainEvent {
+  id                  String          @id @default(uuid())
+  businessId          String
+  business            Business        @relation(fields: [businessId], references: [id])
+  conversationId      String
+  conversation        Conversation    @relation(fields: [conversationId], references: [id])
+  conversationEntryId String?
+  eventType           DomainEventType
+  // The full event object (server/domain-events/types.ts DomainEvent),
+  // verbatim — reprocessable, never partially reconstructed from columns.
+  payload             Json
+  occurredAt          DateTime
+  createdAt           DateTime        @default(now())
+
+  observations Observation[]
+
+  @@index([conversationId, occurredAt])
+  @@index([businessId])
+  @@index([eventType])
+  @@map("domain_events")
+}
+
+enum ObservationType {
+  PRICE_REQUEST
+  COMPATIBILITY_QUESTION
+  INSTALLATION_QUESTION
+  CUSTOMER_GHOSTED
+  PHOTO_REQUEST
+  DISCOUNT_NEGOTIATION
+}
+
+// Read-only signal derived from a DomainEvent by the Observation Engine.
+// Never updated or deleted — a future Learning Engine reconstructs
+// commercial patterns by reading this table, not by re-deriving it.
+model Observation {
+  id                  String          @id @default(uuid())
+  businessId          String
+  business            Business        @relation(fields: [businessId], references: [id])
+  conversationId      String
+  conversation        Conversation    @relation(fields: [conversationId], references: [id])
+  domainEventId       String
+  domainEvent         DomainEvent     @relation(fields: [domainEventId], references: [id])
+  conversationEntryId String?
+  type                ObservationType
+  summary             String
+  // Evidence[] (server/intelligence/types.ts) — reused, not reinvented.
+  evidence            Json
+  occurredAt          DateTime
+  createdAt           DateTime        @default(now())
+
+  @@index([conversationId, occurredAt])
+  @@index([businessId])
+  @@index([type])
+  @@map("observations")
 }
 
 // Chronological delivery-status history for a sent message (Meta's status

@@ -12,6 +12,8 @@ import type {
   ConversationSnapshotRepository,
   DecisionEventRepository,
   DecisionRepository,
+  DomainEventRepository,
+  ObservationRepository,
   OutcomeRepository,
 } from "../../persistence/repositories";
 import type {
@@ -23,8 +25,12 @@ import type {
   RecordOutcomeInput,
   SaveConversationSnapshotInput,
   SaveDecisionInput,
+  SaveDomainEventInput,
+  SaveObservationInput,
   SavedConversationSnapshot,
   SavedDecisionRecord,
+  SavedDomainEventRecord,
+  SavedObservationRecord,
 } from "../../persistence/types";
 import type { KoriUnitOfWork, TransactionRunner } from "../../persistence/unit-of-work";
 
@@ -34,6 +40,8 @@ export interface FakeStore {
   decisionEvents: Map<string, DecisionEventRecord>;
   advisorActions: Map<string, AdvisorActionRecord>;
   outcomes: Map<string, OutcomeRecord>;
+  domainEvents: Map<string, SavedDomainEventRecord>;
+  observations: Map<string, SavedObservationRecord>;
 }
 
 export function createEmptyStore(): FakeStore {
@@ -43,6 +51,8 @@ export function createEmptyStore(): FakeStore {
     decisionEvents: new Map(),
     advisorActions: new Map(),
     outcomes: new Map(),
+    domainEvents: new Map(),
+    observations: new Map(),
   };
 }
 
@@ -173,6 +183,60 @@ function createFakeOutcomeRepository(store: FakeStore): OutcomeRepository {
   };
 }
 
+function createFakeDomainEventRepository(store: FakeStore): DomainEventRepository {
+  return {
+    async append(input: SaveDomainEventInput): Promise<SavedDomainEventRecord> {
+      const saved: SavedDomainEventRecord = {
+        id: randomUUID(),
+        businessId: input.businessId,
+        conversationId: input.conversationId,
+        conversationEntryId: input.conversationEntryId ?? null,
+        eventType: input.event.type,
+        event: input.event,
+        occurredAt: input.event.occurredAt,
+        createdAt: new Date(),
+      };
+      store.domainEvents.set(saved.id, saved);
+      return saved;
+    },
+    async listForConversation(conversationId) {
+      return byChronological([...store.domainEvents.values()].filter((e) => e.conversationId === conversationId));
+    },
+  };
+}
+
+function createFakeObservationRepository(store: FakeStore): ObservationRepository {
+  return {
+    async save(input: SaveObservationInput): Promise<SavedObservationRecord> {
+      const saved: SavedObservationRecord = {
+        id: randomUUID(),
+        businessId: input.businessId,
+        conversationId: input.conversationId,
+        domainEventId: input.domainEventId,
+        conversationEntryId: input.conversationEntryId ?? null,
+        observation: input.observation,
+        occurredAt: input.occurredAt,
+        createdAt: new Date(),
+      };
+      store.observations.set(saved.id, saved);
+      return saved;
+    },
+    async listForConversation(conversationId) {
+      return byChronological([...store.observations.values()].filter((o) => o.conversationId === conversationId));
+    },
+    async aggregateByType(businessId) {
+      const counts = new Map<string, { count: number; lastSeenAt: Date }>();
+      for (const o of store.observations.values()) {
+        if (o.businessId !== businessId) continue;
+        const existing = counts.get(o.observation.type);
+        const lastSeenAt = existing && existing.lastSeenAt > o.occurredAt ? existing.lastSeenAt : o.occurredAt;
+        counts.set(o.observation.type, { count: (existing?.count ?? 0) + 1, lastSeenAt });
+      }
+      return [...counts.entries()].map(([type, v]) => ({ type: type as never, ...v }));
+    },
+  };
+}
+
 /** Lets a test wrap one repository with fault-injecting/spy behavior, layered on top of the base in-memory fake. */
 export interface FakeRepositoryOverrides {
   conversationSnapshots?: (base: ConversationSnapshotRepository) => ConversationSnapshotRepository;
@@ -180,6 +244,8 @@ export interface FakeRepositoryOverrides {
   decisionEvents?: (base: DecisionEventRepository) => DecisionEventRepository;
   advisorActions?: (base: AdvisorActionRepository) => AdvisorActionRepository;
   outcomes?: (base: OutcomeRepository) => OutcomeRepository;
+  domainEvents?: (base: DomainEventRepository) => DomainEventRepository;
+  observations?: (base: ObservationRepository) => ObservationRepository;
 }
 
 function buildUow(store: FakeStore, overrides: FakeRepositoryOverrides): KoriUnitOfWork {
@@ -192,6 +258,10 @@ function buildUow(store: FakeStore, overrides: FakeRepositoryOverrides): KoriUni
     advisorActions: overrides.advisorActions?.(createFakeAdvisorActionRepository(store)) ??
       createFakeAdvisorActionRepository(store),
     outcomes: overrides.outcomes?.(createFakeOutcomeRepository(store)) ?? createFakeOutcomeRepository(store),
+    domainEvents: overrides.domainEvents?.(createFakeDomainEventRepository(store)) ??
+      createFakeDomainEventRepository(store),
+    observations: overrides.observations?.(createFakeObservationRepository(store)) ??
+      createFakeObservationRepository(store),
   };
 }
 
@@ -216,6 +286,8 @@ export function createFakeTransactionRunner(overrides: FakeRepositoryOverrides =
       store.decisionEvents = working.decisionEvents;
       store.advisorActions = working.advisorActions;
       store.outcomes = working.outcomes;
+      store.domainEvents = working.domainEvents;
+      store.observations = working.observations;
       return result;
     },
   };

@@ -7,8 +7,10 @@
 // to be persisted. Only genuinely new concepts introduced by this phase
 // (DecisionEvent, AdvisorAction, Outcome) get new types here.
 
+import type { DomainEvent } from "../domain-events/types";
 import type { ConversationIntelligenceResult } from "../intelligence/types";
 import type { DecisionStatus, KoriDecision } from "../intelligence/decision/types";
+import type { Observation, ObservationType } from "../intelligence/observation/types";
 
 // --- ConversationSnapshot ---------------------------------------------------
 
@@ -145,4 +147,117 @@ export interface OutcomeRecord {
   notes: string | null;
   occurredAt: Date;
   createdAt: Date;
+}
+
+// --- Observer Mode v1: DomainEvent (append-only) ------------------------------
+
+export interface SaveDomainEventInput {
+  businessId: string;
+  conversationId: string;
+  conversationEntryId?: string;
+  /** The full event object, persisted verbatim (payload column) — reprocessable. */
+  event: DomainEvent;
+}
+
+export interface SavedDomainEventRecord {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  conversationEntryId: string | null;
+  eventType: DomainEvent["type"];
+  /** Reassembled verbatim from storage — identical in shape to what was recorded. */
+  event: DomainEvent;
+  occurredAt: Date;
+  createdAt: Date;
+}
+
+// --- Observer Mode v1: Observation (append-only) ------------------------------
+
+export interface SaveObservationInput {
+  businessId: string;
+  conversationId: string;
+  domainEventId: string;
+  conversationEntryId?: string;
+  observation: Observation;
+  occurredAt: Date;
+}
+
+export interface SavedObservationRecord {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  domainEventId: string;
+  conversationEntryId: string | null;
+  /** Reassembled verbatim from storage — identical in shape to what the engine produced. */
+  observation: Observation;
+  occurredAt: Date;
+  createdAt: Date;
+}
+
+// --- Observer Console v1: read-only aggregate/search/projection contracts ----
+//
+// Every type in this section backs a read-only repository method consumed
+// by server/observer-console/** (see ARCHITECTURE.md §20). None of them are
+// used by KoriUnitOfWork/TransactionRunner — there is no write/atomicity
+// concern here, only reads.
+
+/**
+ * One row per ObservationType that has >=1 saved Observation for a business
+ * — types with zero rows are absent, not zero-filled. The caller computes
+ * "never observed" as a set difference against the full ObservationType
+ * enum (server/observer-console/observation-catalog.ts).
+ */
+export interface ObservationTypeAggregate {
+  type: ObservationType;
+  count: number;
+  lastSeenAt: Date | null;
+}
+
+/** Hard ceiling for ConversationSearchRepository.search — enforced inside the implementation, never left to the caller to self-limit. */
+export const MAX_CONVERSATION_SEARCH_RESULTS = 50;
+
+/**
+ * "ANY" (default) applies no observation-presence filter. HAS_ANY/HAS_NONE
+ * are mutually exclusive with `hasObservationType` — HAS_NONE combined with
+ * a specific type is a contradiction ("conversations with no observations
+ * that have this observation type") and is rejected at the application
+ * validation layer (server/application/observer-console-actions.ts), not
+ * silently reinterpreted here.
+ */
+export type ObservationStateFilter = "ANY" | "HAS_ANY" | "HAS_NONE";
+
+export interface ConversationSearchFilters {
+  /** Matched against Lead.name / Lead.phone, case-insensitive. */
+  searchText?: string;
+  occurredAfter?: Date;
+  occurredBefore?: Date;
+  hasObservationType?: ObservationType;
+  observationState?: ObservationStateFilter;
+}
+
+export interface ConversationListItem {
+  id: string;
+  leadName: string;
+  leadPhone: string;
+  status: string;
+  lastEntryAt: Date;
+  observationCount: number;
+}
+
+/**
+ * Sanitized ConversationEntry projection — rawPayload (and mediaId/
+ * mediaSizeBytes/quotedExternalId/externalId) are deliberately absent.
+ * PrismaConversationEntryRepository excludes them at the query's `select`
+ * level, not by filtering an already-fetched row, so rawPayload never
+ * leaves Postgres for this read path.
+ */
+export interface ConversationEntryRecord {
+  id: string;
+  direction: "INBOUND" | "OUTBOUND";
+  content: string;
+  messageType: string;
+  occurredAt: Date;
+  mediaMimeType: string | null;
+  mediaFilename: string | null;
+  mediaCaption: string | null;
 }

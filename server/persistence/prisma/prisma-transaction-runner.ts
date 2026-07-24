@@ -5,6 +5,8 @@ import { PrismaAdvisorActionRepository } from "./prisma-advisor-action-repositor
 import { PrismaConversationSnapshotRepository } from "./prisma-conversation-snapshot-repository";
 import { PrismaDecisionEventRepository } from "./prisma-decision-event-repository";
 import { PrismaDecisionRepository } from "./prisma-decision-repository";
+import { PrismaDomainEventRepository } from "./prisma-domain-event-repository";
+import { PrismaObservationRepository } from "./prisma-observation-repository";
 import { PrismaOutcomeRepository } from "./prisma-outcome-repository";
 
 /**
@@ -24,6 +26,8 @@ export class PrismaTransactionRunner implements TransactionRunner {
         decisionEvents: new PrismaDecisionEventRepository(tx),
         advisorActions: new PrismaAdvisorActionRepository(tx),
         outcomes: new PrismaOutcomeRepository(tx),
+        domainEvents: new PrismaDomainEventRepository(tx),
+        observations: new PrismaObservationRepository(tx),
       };
       return work(uow);
     });

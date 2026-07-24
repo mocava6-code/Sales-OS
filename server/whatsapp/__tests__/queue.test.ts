@@ -106,6 +106,18 @@ describe.skipIf(!shouldRunDbTests)("WhatsApp outbound queue — 8. outbound queu
     const events = await db!.whatsAppMessageStatusEvent.findMany({ where: { pendingMessageId: message.id } });
     expect(events).toHaveLength(1);
     expect(events[0].status).toBe("SENT");
+
+    // Observer Mode v1 — every outgoing WhatsApp message must be persisted
+    // as a ConversationEntry too, the same way an inbound message is.
+    const entry = await db!.conversationEntry.findUnique({ where: { id: sent.conversationEntryId } });
+    expect(entry).not.toBeNull();
+    expect(entry?.direction).toBe("OUTBOUND");
+    expect(entry?.content).toBe("Hola");
+    expect(entry?.externalId).toBe("wamid.SENT1");
+
+    const conversation = await db!.conversation.findUnique({ where: { id: fixture.conversationId } });
+    expect(conversation?.lastEntryDirection).toBe("OUTBOUND");
+    expect(conversation?.status).toBe("WAITING_ON_CUSTOMER");
   });
 
   it("markMessageFailed (READY -> FAILED) records the failure reason", async () => {

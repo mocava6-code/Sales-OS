@@ -121,6 +121,60 @@ export async function loadAuthorizedPendingMessage(
   return message;
 }
 
+export interface AuthorizedConversationForObserverConsole {
+  id: string;
+  businessId: string;
+  leadName: string;
+  leadPhone: string;
+  channel: string;
+  status: string;
+}
+
+/**
+ * Tenant-scoping only — same NOT_FOUND-not-FORBIDDEN reasoning as
+ * loadAuthorizedConversation. Role gating (Observer Console is OWNER-only)
+ * is a separate, cheaper check — see assertObserverConsoleAccess below,
+ * called first by every handler so a non-OWNER request never pays for this
+ * lookup at all.
+ */
+export async function loadAuthorizedConversationForObserverConsole(
+  user: AuthenticatedUser,
+  conversationId: string,
+  db: PrismaClientOrTransaction = prisma,
+): Promise<AuthorizedConversationForObserverConsole> {
+  const conversation = await db.conversation.findFirst({
+    where: { id: conversationId, businessId: user.businessId },
+    include: { lead: { select: { name: true, phone: true } } },
+  });
+
+  if (!conversation) {
+    throw new NotFoundError("Conversation");
+  }
+
+  return {
+    id: conversation.id,
+    businessId: conversation.businessId,
+    leadName: conversation.lead.name,
+    leadPhone: conversation.lead.phone,
+    channel: conversation.channel,
+    status: conversation.status,
+  };
+}
+
+/**
+ * Observer Console v1 is OWNER-only (Kori's "admin" role, §14) — an
+ * internal/operator tool a SALESPERSON has no business reaching at all.
+ * Checked first in every observer-console-actions.ts handler, before any
+ * DB lookup or dependency construction — no reason to pay for a
+ * conversation or business-wide query a non-OWNER was never going to see
+ * the result of.
+ */
+export function assertObserverConsoleAccess(user: AuthenticatedUser): void {
+  if (user.role !== "OWNER") {
+    throw new ForbiddenError("Observer Console is only available to business owners.");
+  }
+}
+
 /**
  * Only the APPROVE workflow is gated by the decision's own approvalRequirement
  * — "advisor approval" (ADVISOR_APPROVAL_REQUIRED) means any business member

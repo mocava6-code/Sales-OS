@@ -21,6 +21,8 @@ interface FakeEntry {
   id: string;
   externalId: string;
   conversationId: string;
+  direction: "INBOUND" | "OUTBOUND";
+  occurredAt: Date;
 }
 
 function createFakeGatewayDeps(
@@ -28,6 +30,7 @@ function createFakeGatewayDeps(
     phoneNumbers?: WhatsAppPhoneNumberRecord[];
     leadAssignments?: Record<string, string>; // phone -> advisorUserId
     runAnalysisImpl?: WhatsAppGatewayDependencies["runAnalysis"];
+    recordDomainEventImpl?: WhatsAppGatewayDependencies["recordDomainEvent"];
   } = {},
 ) {
   let idCounter = 0;
@@ -49,6 +52,10 @@ function createFakeGatewayDeps(
       })),
   );
 
+  const recordDomainEvent = vi.fn(
+    overrides.recordDomainEventImpl ?? (async () => ({ domainEvent: {} as never, observations: [] })),
+  );
+
   const applyStatusUpdate = vi.fn(async () => ({ id: "event-1" }) as unknown);
   const enqueueMessage = vi.fn(async () => ({ id: nextId("pending") }));
 
@@ -63,24 +70,37 @@ function createFakeGatewayDeps(
     },
     findOrCreateConversation: async (businessId, leadId, whatsappPhoneNumberId) => {
       const existing = [...conversations.values()].find((c) => c.businessId === businessId && c.leadId === leadId);
-      if (existing) return existing;
+      if (existing) return { id: existing.id, created: false };
       const conversation: FakeConversation = { id: nextId("conv"), businessId, leadId, whatsappPhoneNumberId };
       conversations.set(conversation.id, conversation);
-      return conversation;
+      return { id: conversation.id, created: true };
     },
     findEntryByExternalId: async (externalId) => [...entries.values()].find((e) => e.externalId === externalId) ?? null,
+    findLatestEntry: async (conversationId) => {
+      const conversationEntries = [...entries.values()].filter((e) => e.conversationId === conversationId);
+      if (!conversationEntries.length) return null;
+      const latest = conversationEntries.reduce((a, b) => (a.occurredAt > b.occurredAt ? a : b));
+      return { direction: latest.direction, occurredAt: latest.occurredAt };
+    },
     appendEntry: async (conversationId, entry) => {
-      const created: FakeEntry = { id: nextId("entry"), externalId: entry.externalId, conversationId };
+      const created: FakeEntry = {
+        id: nextId("entry"),
+        externalId: entry.externalId,
+        conversationId,
+        direction: entry.direction,
+        occurredAt: entry.occurredAt,
+      };
       entries.set(created.id, created);
       return created;
     },
     loadConversationForAnalysis: async () => ({ channel: "WHATSAPP", entries: [] }),
     runAnalysis,
+    recordDomainEvent,
     applyStatusUpdate,
     enqueueMessage,
   };
 
-  return { deps, store: { phoneNumbers, leads, conversations, entries }, runAnalysis, applyStatusUpdate, enqueueMessage };
+  return { deps, store: { phoneNumbers, leads, conversations, entries }, runAnalysis, recordDomainEvent, applyStatusUpdate, enqueueMessage };
 }
 
 function textMessage(overrides: Partial<NormalizedWhatsAppMessage> = {}): NormalizedWhatsAppMessage {
@@ -139,6 +159,7 @@ describe("WhatsAppGateway.handleInboundMessage — 4. duplicate detection", () =
     expect(first.duplicate).toBe(false);
     expect(duplicate.duplicate).toBe(true);
     expect(duplicate.analysisTriggered).toBe(false);
+    expect(duplicate.observationsRecorded).toBe(false);
     expect(store.entries.size).toBe(1);
     expect(runAnalysis).toHaveBeenCalledTimes(1);
   });
@@ -176,6 +197,86 @@ describe("WhatsAppGateway.handleInboundMessage — 7. orchestration trigger", ()
     expect(result.duplicate).toBe(false);
     expect(result.analysisTriggered).toBe(false);
     expect(result.analysisError).toBeInstanceOf(Error);
+  });
+});
+
+describe("WhatsAppGateway.handleInboundMessage — Observer Mode v1 domain events", () => {
+  it("records CONVERSATION_CREATED and MESSAGE_RECEIVED for a first-time sender", async () => {
+    const { deps, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    expect(result.observationsRecorded).toBe(true);
+    expect(recordDomainEvent).toHaveBeenCalledTimes(2);
+    expect(recordDomainEvent.mock.calls[0][0].event).toMatchObject({ type: "CONVERSATION_CREATED", conversationId: result.conversationId });
+    expect(recordDomainEvent.mock.calls[1][0].event).toMatchObject({ type: "MESSAGE_RECEIVED", conversationId: result.conversationId });
+  });
+
+  it("records only MESSAGE_RECEIVED (no CONVERSATION_CREATED) for an existing conversation", async () => {
+    const { deps, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleInboundMessage(textMessage({ externalId: "wamid.MSG1" }));
+    recordDomainEvent.mockClear();
+    await gateway.handleInboundMessage(textMessage({ externalId: "wamid.MSG2" }));
+
+    expect(recordDomainEvent).toHaveBeenCalledTimes(1);
+    expect(recordDomainEvent.mock.calls[0][0].event).toMatchObject({ type: "MESSAGE_RECEIVED" });
+  });
+
+  it("records ATTACHMENT_RECEIVED in addition to MESSAGE_RECEIVED for a media message", async () => {
+    const { deps, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleInboundMessage(
+      textMessage({
+        messageType: "IMAGE",
+        content: "[image]",
+        media: { mediaId: "media-1", mimeType: "image/jpeg", caption: "check this out" },
+      }),
+    );
+
+    const eventTypes = recordDomainEvent.mock.calls.map((call) => call[0].event.type);
+    expect(eventTypes).toEqual(["CONVERSATION_CREATED", "MESSAGE_RECEIVED", "ATTACHMENT_RECEIVED"]);
+  });
+
+  it("does not record any domain events for a duplicate delivery", async () => {
+    const { deps, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleInboundMessage(textMessage());
+    recordDomainEvent.mockClear();
+    await gateway.handleInboundMessage(textMessage());
+
+    expect(recordDomainEvent).not.toHaveBeenCalled();
+  });
+
+  it("swallows a domain-event recording failure — never throws, but reports it in the result", async () => {
+    const failingRecordDomainEvent = vi.fn(async () => {
+      throw new Error("persistence unavailable");
+    });
+    const { deps } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      recordDomainEventImpl: failingRecordDomainEvent,
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    expect(result.duplicate).toBe(false);
+    expect(result.observationsRecorded).toBe(false);
+    expect(result.observationError).toBeInstanceOf(Error);
+    // A failure to record the domain event must never block the rest of the pipeline.
+    expect(result.analysisTriggered).toBe(true);
   });
 });
 

@@ -114,8 +114,12 @@ export function markMessageCancelled(id: string, db: PrismaClientOrTransaction =
 
 /**
  * READY -> SENT, called only by server/whatsapp/sender.ts after a successful
- * Graph API call. Also records the SENT status event atomically, in the same
- * transaction, so the chronological status history always starts at SENT.
+ * Graph API call. Also records the SENT status event and appends the
+ * corresponding outbound ConversationEntry, in parallel, so the message
+ * shows up in Conversation.entries the same way an inbound message does
+ * (Observer Mode v1 — "every outgoing WhatsApp message must be persisted").
+ * The created entry's id is returned so the caller can emit a MESSAGE_SENT
+ * domain event referencing it.
  */
 export async function markMessageSent(id: string, externalId: string, db: PrismaClientOrTransaction = prisma) {
   const existing = await db.pendingWhatsAppMessage.findUnique({ where: { id } });
@@ -125,7 +129,7 @@ export async function markMessageSent(id: string, externalId: string, db: Prisma
   assertTransitionAllowed(existing.status, "SENT");
 
   const now = new Date();
-  const [updated] = await Promise.all([
+  const [updated, , entry] = await Promise.all([
     db.pendingWhatsAppMessage.update({
       where: { id },
       data: { status: "SENT", externalId, sentAt: now },
@@ -133,9 +137,23 @@ export async function markMessageSent(id: string, externalId: string, db: Prisma
     db.whatsAppMessageStatusEvent.create({
       data: { pendingMessageId: id, status: "SENT", occurredAt: now },
     }),
+    db.conversationEntry.create({
+      data: {
+        conversationId: existing.conversationId,
+        direction: "OUTBOUND",
+        content: existing.body,
+        messageType: "TEXT",
+        occurredAt: now,
+        externalId,
+      },
+    }),
+    db.conversation.update({
+      where: { id: existing.conversationId },
+      data: { lastEntryAt: now, lastEntryDirection: "OUTBOUND", status: "WAITING_ON_CUSTOMER" },
+    }),
   ]);
 
-  return updated;
+  return { ...updated, conversationEntryId: entry.id };
 }
 
 /** READY -> FAILED, called by server/whatsapp/sender.ts when the Graph API call itself fails. */

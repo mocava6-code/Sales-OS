@@ -87,6 +87,10 @@ export async function cleanupTestFixture(db: PrismaClient, fixture: TestFixture)
   await db.decisionEvent.deleteMany({ where: { decisionRecord: { conversationId: fixture.conversationId } } });
   await db.decisionRecord.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.conversationSnapshot.deleteMany({ where: { conversationId: fixture.conversationId } });
+  // Observer Mode v1 — observations reference domainEvents, so they're
+  // deleted first even though both hang directly off the conversation.
+  await db.observation.deleteMany({ where: { conversationId: fixture.conversationId } });
+  await db.domainEvent.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.conversationEntry.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.conversation.delete({ where: { id: fixture.conversationId } });
   await db.lead.delete({ where: { id: fixture.leadId } });

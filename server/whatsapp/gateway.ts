@@ -6,16 +6,21 @@ import type { PrismaClient } from "@/server/db/generated/client";
 import type { AuthorizedConversation } from "@/server/application/access-control";
 import { buildEngineInputFromConversation } from "@/server/application/analyze-conversation-input";
 import { getAIProvider, getTransactionRunner } from "@/server/application/composition-root";
+import type { DomainEvent } from "@/server/domain-events/types";
 import { analyzeConversationAndCreateDecisions } from "@/server/orchestration/analyze-conversation-and-create-decisions";
+import { recordDomainEvent as recordDomainEventDefault } from "@/server/orchestration/record-domain-event";
 import type {
   AnalyzeConversationAndCreateDecisionsInput,
   AnalyzeConversationAndCreateDecisionsResult,
 } from "@/server/orchestration/types";
+import type { RecordDomainEventInput, RecordDomainEventResult } from "@/server/orchestration/record-domain-event";
+import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
 import { findOrCreateLeadByPhone } from "@/server/services/lead-service";
 import {
   appendWhatsAppEntry,
   findConversationEntryByExternalId,
   findOrCreateWhatsAppConversation,
+  type FindOrCreateWhatsAppConversationResult,
   type WhatsAppEntryInput,
 } from "@/server/services/conversation-service";
 import { UnknownPhoneNumberError } from "./errors";
@@ -25,6 +30,12 @@ import {
   type EnqueuePendingMessageInput,
 } from "./queue";
 import type { NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "./types";
+
+/** The conversation entry fields the gateway needs to know about "what happened right before this message" — see MessageReceivedEvent.previousEntry. */
+export interface PreviousEntryRecord {
+  direction: "INBOUND" | "OUTBOUND";
+  occurredAt: Date;
+}
 
 // The gateway owns every Meta-specific concern: it's the only place that
 // translates a NormalizedWhatsAppMessage/NormalizedWhatsAppStatus into calls
@@ -49,6 +60,10 @@ export interface InboundMessageResult {
   analysisTriggered: boolean;
   /** Set when orchestration failed — never thrown, since a webhook must still ack quickly. */
   analysisError?: unknown;
+  /** Observer Mode v1 — whether every applicable DomainEvent for this message was recorded. */
+  observationsRecorded: boolean;
+  /** Set when recording a domain event failed — never thrown, same best-effort contract as analysisError. */
+  observationError?: unknown;
 }
 
 export interface StatusEventResult {
@@ -78,11 +93,19 @@ export interface WhatsAppGatewayDependencies {
     businessId: string,
     phone: string,
   ) => Promise<{ id: string; assignedToUserId: string | null }>;
-  findOrCreateConversation?: (businessId: string, leadId: string, whatsappPhoneNumberId: string) => Promise<{ id: string }>;
+  findOrCreateConversation?: (
+    businessId: string,
+    leadId: string,
+    whatsappPhoneNumberId: string,
+  ) => Promise<FindOrCreateWhatsAppConversationResult>;
   findEntryByExternalId?: (externalId: string) => Promise<{ id: string } | null>;
+  /** The conversation's most recent entry *before* the one about to be appended, if any — feeds MessageReceivedEvent.previousEntry (CUSTOMER_GHOSTED detection). */
+  findLatestEntry?: (conversationId: string) => Promise<PreviousEntryRecord | null>;
   appendEntry?: (conversationId: string, entry: WhatsAppEntryInput) => Promise<{ id: string }>;
   loadConversationForAnalysis?: (conversationId: string) => Promise<Pick<AuthorizedConversation, "channel" | "entries">>;
   runAnalysis?: (input: AnalyzeConversationAndCreateDecisionsInput) => Promise<AnalyzeConversationAndCreateDecisionsResult>;
+  /** Observer Mode v1 — best-effort, never allowed to fail the underlying WhatsApp write it's describing. */
+  recordDomainEvent?: (input: RecordDomainEventInput) => Promise<RecordDomainEventResult>;
   applyStatusUpdate?: (input: {
     externalId: string;
     status: NormalizedWhatsAppStatus["status"];
@@ -121,6 +144,24 @@ function defaultRunAnalysis(
   });
 }
 
+async function defaultFindLatestEntry(conversationId: string, db: PrismaClient): Promise<PreviousEntryRecord | null> {
+  const entry = await db.conversationEntry.findFirst({
+    where: { conversationId },
+    orderBy: { occurredAt: "desc" },
+  });
+  return entry ? { direction: entry.direction, occurredAt: entry.occurredAt } : null;
+}
+
+/**
+ * Bound to the same `db` every other default in this factory uses — never
+ * the composition-root's cached singleton — so that createWhatsAppGateway(overrides, db)
+ * called with a test PrismaClient (see gateway.db.test.ts) never reaches
+ * the app's real DATABASE_URL for Observer Mode's writes either.
+ */
+function defaultRecordDomainEvent(input: RecordDomainEventInput, db: PrismaClient): Promise<RecordDomainEventResult> {
+  return recordDomainEventDefault(input, { transactionRunner: new PrismaTransactionRunner(db) });
+}
+
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
@@ -143,11 +184,13 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
       ((businessId: string, leadId: string, whatsappPhoneNumberId: string) =>
         findOrCreateWhatsAppConversation(businessId, leadId, whatsappPhoneNumberId, db)),
     findEntryByExternalId: overrides.findEntryByExternalId ?? ((externalId: string) => findConversationEntryByExternalId(externalId, db)),
+    findLatestEntry: overrides.findLatestEntry ?? ((conversationId: string) => defaultFindLatestEntry(conversationId, db)),
     appendEntry:
       overrides.appendEntry ?? ((conversationId: string, entry: WhatsAppEntryInput) => appendWhatsAppEntry(conversationId, entry, db)),
     loadConversationForAnalysis:
       overrides.loadConversationForAnalysis ?? ((conversationId: string) => defaultLoadConversationForAnalysis(conversationId, db)),
     runAnalysis: overrides.runAnalysis ?? defaultRunAnalysis,
+    recordDomainEvent: overrides.recordDomainEvent ?? ((input: RecordDomainEventInput) => defaultRecordDomainEvent(input, db)),
     applyStatusUpdate: overrides.applyStatusUpdate ?? ((input: Parameters<typeof applyStatusUpdateDefault>[0]) => applyStatusUpdateDefault(input, db)),
     enqueueMessage: overrides.enqueueMessage ?? ((input: EnqueuePendingMessageInput) => enqueuePendingMessageDefault(input, db)),
   };
@@ -158,7 +201,7 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
       // safely exit as cheaply as possible.
       const existingEntry = await deps.findEntryByExternalId(message.externalId);
       if (existingEntry) {
-        return { duplicate: true, analysisTriggered: false };
+        return { duplicate: true, analysisTriggered: false, observationsRecorded: false };
       }
 
       // 1-2. Identify business + connected WhatsApp number.
@@ -172,6 +215,12 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
 
       // 4. Locate or create conversation.
       const conversation = await deps.findOrCreateConversation(phoneNumber.businessId, lead.id, phoneNumber.id);
+
+      // Snapshot "what was here before" ahead of the write below — this is
+      // the previousEntry Observer Mode's CUSTOMER_GHOSTED detection needs
+      // (see server/domain-events/types.ts). Read before insert so it never
+      // sees the row about to be appended.
+      const previousEntry = await deps.findLatestEntry(conversation.id);
 
       // 5-6. Persist message + update conversation (one write in appendWhatsAppEntry).
       let entry: { id: string };
@@ -194,9 +243,61 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         // Two concurrent deliveries of the same wamid raced past the check
         // above — the unique constraint is the real backstop.
         if (isUniqueConstraintViolation(error)) {
-          return { duplicate: true, analysisTriggered: false };
+          return { duplicate: true, analysisTriggered: false, observationsRecorded: false };
         }
         throw error;
+      }
+
+      // Observer Mode v1 — record CONVERSATION_CREATED (if this thread is
+      // new), MESSAGE_RECEIVED, and (when the message carries media)
+      // ATTACHMENT_RECEIVED. Best-effort: never blocks the write above or
+      // the webhook's fast ack, same contract as analysisError below.
+      let observationsRecorded = false;
+      let observationError: unknown;
+      try {
+        if (conversation.created) {
+          const conversationCreatedEvent: DomainEvent = {
+            type: "CONVERSATION_CREATED",
+            businessId: phoneNumber.businessId,
+            conversationId: conversation.id,
+            leadId: lead.id,
+            channel: "WHATSAPP",
+            source: "WHATSAPP_SYNCED",
+            occurredAt: message.occurredAt,
+          };
+          await deps.recordDomainEvent({ event: conversationCreatedEvent });
+        }
+
+        const messageReceivedEvent: DomainEvent = {
+          type: "MESSAGE_RECEIVED",
+          businessId: phoneNumber.businessId,
+          conversationId: conversation.id,
+          conversationEntryId: entry.id,
+          messageType: message.messageType,
+          content: message.content,
+          externalId: message.externalId,
+          occurredAt: message.occurredAt,
+          previousEntry: previousEntry ?? undefined,
+        };
+        await deps.recordDomainEvent({ event: messageReceivedEvent, conversationEntryId: entry.id });
+
+        if (message.media) {
+          const attachmentReceivedEvent: DomainEvent = {
+            type: "ATTACHMENT_RECEIVED",
+            businessId: phoneNumber.businessId,
+            conversationId: conversation.id,
+            conversationEntryId: entry.id,
+            mediaType: message.messageType,
+            mimeType: message.media.mimeType,
+            caption: message.media.caption,
+            occurredAt: message.occurredAt,
+          };
+          await deps.recordDomainEvent({ event: attachmentReceivedEvent, conversationEntryId: entry.id });
+        }
+
+        observationsRecorded = true;
+      } catch (error) {
+        observationError = error;
       }
 
       // 7. Trigger analyzeConversationAndCreateDecisions() — orchestration is
@@ -226,6 +327,8 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         advisorUserId: lead.assignedToUserId,
         analysisTriggered,
         analysisError,
+        observationsRecorded,
+        observationError,
       };
     },
 

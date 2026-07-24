@@ -8,6 +8,8 @@ import type {
   ConversationSnapshotRepository,
   DecisionEventRepository,
   DecisionRepository,
+  DomainEventRepository,
+  ObservationRepository,
   OutcomeRepository,
 } from "./repositories";
 
@@ -18,6 +20,8 @@ export interface KoriUnitOfWork {
   decisionEvents: DecisionEventRepository;
   advisorActions: AdvisorActionRepository;
   outcomes: OutcomeRepository;
+  domainEvents: DomainEventRepository;
+  observations: ObservationRepository;
 }
 
 /**

@@ -593,5 +593,191 @@ Carried over from §10's spirit — explicitly out of scope for every phase so f
 
 ---
 
-**Status:** §1–§10 is the original proposal (partially superseded, see above). Part II (§11–§18)
-reflects what has actually been built and tested as of the WhatsApp Business Integration v1 phase.
+## 19. Observer Mode v1 (`server/domain-events/`, `server/intelligence/observation/`)
+
+Kori's second lens on a conversation, independent of the AI-driven Conversation Intelligence /
+Decision Engine pipeline (§11–§15). The objective is explicitly not to automate conversations — it's
+to observe, normalize, and persist every WhatsApp interaction so a future Learning Engine, Memory,
+Knowledge Platform, or Business Intelligence module can be built entirely from stored evidence,
+the same way §12's `DecisionEvent`/`AdvisorAction`/`Outcome` ledger was built ahead of the Learning
+Engine that will eventually read it.
+
+```
+server/domain-events/types.ts     Prisma-free event vocabulary — a shared leaf module like
+                                   server/intelligence/types.ts, imported by server/whatsapp/**,
+                                   server/intelligence/observation/**, and server/orchestration/**
+server/intelligence/observation/  the Observation Engine — deterministic, no AIProvider
+        detectors/                one pure function per typed signal
+        observe.ts                deriveObservations(event) — the engine's one public entry point
+server/orchestration/
+        record-domain-event.ts    recordDomainEvent(event) — persists the DomainEvent, then every
+                                   derived Observation, in one transaction
+server/persistence/
+        prisma-domain-event-repository.ts / prisma-observation-repository.ts
+```
+
+**Domain events** — `CONVERSATION_CREATED`, `MESSAGE_RECEIVED`, `MESSAGE_SENT`,
+`ATTACHMENT_RECEIVED`, `CONVERSATION_CLOSED` — are immutable and append-only (`DomainEvent` table,
+same design as `DecisionEvent`: never updated, never aggregated in place; the full event object is
+stored verbatim in `payload` for future reprocessing, alongside `businessId`/`conversationId`/
+`conversationEntryId`/`eventType`/`occurredAt` as queryable columns). They are emitted from the same
+places the existing pipeline already writes a `ConversationEntry`, best-effort and always caught —
+same contract as `analysisError` in `WhatsAppGateway.handleInboundMessage` — so a failure to record
+an event or observation never blocks the underlying WhatsApp write it's describing:
+
+- **Inbound** (`server/whatsapp/gateway.ts`) — `CONVERSATION_CREATED` when
+  `findOrCreateWhatsAppConversation` creates a new thread, `MESSAGE_RECEIVED` for every inbound
+  message, and `ATTACHMENT_RECEIVED` in addition when the message carries media.
+- **Outbound** (`server/whatsapp/queue.ts`/`sender.ts`) — `MESSAGE_SENT`, fired once
+  `markMessageSent` succeeds. This phase also closed a real gap: `markMessageSent` previously updated
+  only `PendingWhatsAppMessage`/`WhatsAppMessageStatusEvent` and never created a `ConversationEntry`
+  — an advisor's own replies were invisible in `Conversation.entries`. It now also appends the
+  outbound entry, which is what "every outgoing WhatsApp message must be persisted" required.
+- **Closing** (`server/services/conversation-service.ts`) — `closeConversation()`, the trigger point
+  `CUSTOMER_GHOSTED` detection needs once a "close conversation" UI/action exists; none does yet (see
+  below).
+
+**The Observation Engine** (`server/intelligence/observation/`) consumes one `DomainEvent` and
+returns zero or more typed `Observation`s (`PRICE_REQUEST`, `COMPATIBILITY_QUESTION`,
+`INSTALLATION_QUESTION`, `PHOTO_REQUEST`, `DISCOUNT_NEGOTIATION`, `CUSTOMER_GHOSTED`) — never a
+decision, recommendation, or reply. It is **deterministic, not AI-driven**: keyword/pattern matching
+(es/pt/en) for the five content-based types, mirroring how `risk-evaluator.ts`/`policy-evaluator.ts`
+are deterministic components living alongside the Decision Engine's AI calls. This keeps "observe,
+don't decide" a structural property (no model call, no confidence score, nothing to hallucinate)
+rather than a prompt instruction, and each `Observation` still carries `Evidence` (reused from
+`server/intelligence/types.ts`) grounding it in the source message. `CUSTOMER_GHOSTED` is the one
+time-based detector: it fires from the gap between a `MessageReceivedEvent`'s `previousEntry` (an
+inbound reply after a long inbound silence) or a `ConversationClosedEvent`'s last-entry state (an
+advisor's message that was never answered before the thread closed) — always supplied by the caller,
+since the engine never queries the database itself.
+
+**`recordDomainEvent`** (`server/orchestration/record-domain-event.ts`) is the one orchestration
+workflow this phase adds, same shape as `analyzeConversationAndCreateDecisions` but with no AI call:
+run the (synchronous, no-I/O) Observation Engine, then persist the `DomainEvent` and every derived
+`Observation` in one atomic transaction (`KoriUnitOfWork` extended with `domainEvents`/
+`observations`). It runs independently of, and never inside, the Conversation Intelligence/Decision
+Engine transaction — the two pipelines are decoupled, exactly as "compatible with the existing
+Conversation Intelligence pipeline" requires.
+
+**What Observer Mode v1 deliberately has not built yet** (same spirit as §10/§18):
+
+- No cron-based or scheduled scan for `CUSTOMER_GHOSTED` — it only fires from events the system
+  already processes (a new inbound message, or an explicit close). A conversation that simply goes
+  silent forever, with no new event, is never retroactively flagged. Consistent with §7's deferral of
+  background-job infrastructure generally.
+- No UI surface for `DomainEvent`/`Observation` history — this phase only produces the log.
+- No "close conversation" UI/action — `closeConversation()` exists as the trigger point, unused by
+  any caller yet, same precedent as `ConversationStatus.CLOSED` itself being schema-only since §15.
+- No Memory, Learning Engine, Knowledge Platform, or Business Intelligence module reads this data
+  yet — this phase is the foundation those are built on, not any of them.
+
+---
+
+## 20. Observer Console v1 (`server/observer-console/`)
+
+An internal, read-only reporting surface over Observer Mode v1's data (§19) — for developers and
+operators to inspect exactly what Kori observed during a conversation, why (as far as the stored
+data actually supports), and what a business's observation history looks like overall. Not
+customer-facing, not part of the salesperson-facing `(app)` mobile shell. Nothing here decides,
+recommends, or writes anything: every mutation path in this codebase remains exactly where §11–§19
+left it.
+
+```
+server/observer-console/          Prisma-free — enforced by an import-scan guardrail test, not
+                                   just code review (see below)
+  types.ts                        DTOs + the combined ObserverConsoleReadDependencies bag
+  detector-registry.ts            DETECTOR_REGISTRY: ObservationType -> DetectorDescriptor
+  ordering.ts                     compareByOccurredAtThenId — the one ordering rule, used at both
+                                   the repository query level and in-memory assembly
+  build-conversation-timeline.ts  read-model assembly service (repository I/O, not a pure function)
+  observation-catalog.ts          read-model assembly service — per-type counts + never-observed
+  conversation-search.ts          read-model assembly service — thin passthrough + DTO mapping
+
+server/persistence/
+  repositories.ts                 ObservationRepository.aggregateByType; new
+                                   ConversationSearchRepository, ConversationEntryRepository —
+                                   neither added to KoriUnitOfWork (no write/atomicity concern)
+  prisma/prisma-conversation-search-repository.ts    capped at MAX_CONVERSATION_SEARCH_RESULTS
+  prisma/prisma-conversation-entry-repository.ts     `select`s only sanitized fields — never
+                                                      pulls rawPayload out of Postgres at all
+
+server/application/
+  access-control.ts                loadAuthorizedConversationForObserverConsole (tenant-scoped,
+                                    NOT_FOUND-not-FORBIDDEN) + assertObserverConsoleAccess
+                                    (OWNER-only, checked first, before any DB lookup)
+  observer-console-actions.ts       authenticate -> authorize -> validate -> read model -> DTO
+  composition-root.ts               + getObserverConsoleReadDependencies() — the only place the
+                                     four repositories above are bound to real Prisma
+
+app/(internal)/                    a route group parallel to (auth)/(app), not nested inside
+                                    either — desktop-oriented, no bottom nav, OWNER-only
+  layout.tsx                        verifySession() + notFound() for any non-OWNER
+  observer/page.tsx                 conversation search/index
+  observer/[conversationId]/page.tsx  the conversation timeline
+  observer/catalog/page.tsx         business-wide observation catalog
+```
+
+**Read-only, enforced structurally, not just by convention.** Every read-model assembly service
+takes its repositories as an injected dependency and never imports a concrete `Prisma*Repository`,
+`PrismaTransactionRunner`, `TransactionRunner`/`KoriUnitOfWork`, or Prisma Client itself —
+`server/observer-console/__tests__/read-only-guardrail.test.ts` scans every source file's import
+specifiers and fails the build if one of those ever appears, alongside a second scan for
+`.create`/`.update`/`.delete`/`.upsert` (and `*Many`) call sites. The four repositories are
+constructed against real Prisma in exactly one place — `getObserverConsoleReadDependencies()` — the
+same caching pattern as `getTransactionRunner()`/`getAIProvider()`.
+
+**Rule provenance is honest about what the data actually supports.** `Observation.evidence[0].excerpt`
+is the entire matched message's text, not the specific substring that matched — no detector persists
+which keyword won, and `CUSTOMER_GHOSTED` persists no excerpt or computed elapsed time at all, only
+its own generated `summary` string. `DETECTOR_REGISTRY` therefore documents which detector is
+*associated with* an `ObservationType` (id, kind, description, a labeled "sample" keyword list) —
+it is transcribed once by a human reading the detectors, never a live import of or a re-run of
+detector logic, and the console never claims to identify an exact match or a recomputed gap. Its
+own completeness test only catches missing entries (coverage drift), not stale keyword samples
+(content drift) — a known limitation, not solved here.
+
+**`CUSTOMER_GHOSTED`'s two trigger paths have different real semantics — verified, not assumed.**
+Re-reading `server/intelligence/observation/detectors/ghosting-detector.ts` while building this
+console surfaced that its `MESSAGE_RECEIVED` trigger fires when the entry *before* a new inbound
+message was **also** inbound (i.e., the advisor never replied between two customer messages, 24h+
+apart) — arguably "the advisor went unresponsive," not "the customer went quiet," despite the
+`CUSTOMER_GHOSTED` label. Its `CONVERSATION_CLOSED` trigger (advisor's last message unanswered 24h+
+before close) *is* the semantics the label suggests. Flagged here as a known engine issue to track
+separately — **not fixed in this milestone**, per Observer Console v1's explicit boundary against
+touching `server/intelligence/observation/**`.
+
+**Deterministic ordering everywhere.** `occurredAt` asc, then `id` asc, applied identically at the
+Prisma query level (`DomainEventRepository`/`ObservationRepository`/`ConversationEntryRepository`'s
+`listForConversation`) and again in `build-conversation-timeline.ts`'s in-memory assembly, via the
+same `compareByOccurredAtThenId` function both production code and tests import — this matters
+because every `Observation` derived from one `DomainEvent` shares that event's exact `occurredAt`
+(`recordDomainEvent` stamps them identically), so the `id` tie-break is often the *only* thing
+making their relative display order deterministic at all.
+
+**Never exposes `rawPayload`.** `PrismaConversationEntryRepository` `select`s exactly the sanitized
+fields (`ConversationEntryRecord` in `server/persistence/types.ts`) — `rawPayload`, `mediaId`,
+`mediaSizeBytes`, `quotedExternalId`, and `externalId` are never pulled out of Postgres for this read
+path, not merely dropped after the fact.
+
+**Search is tenant-scoped and hard-capped.** `ConversationSearchRepository.search` always clamps to
+`MAX_CONVERSATION_SEARCH_RESULTS` (50) via `Math.min`, regardless of what's requested — proven by a
+DB-gated test that creates 55 rows and confirms exactly 50 come back. The `observationState`
+filter (`"ANY" | "HAS_ANY" | "HAS_NONE"`) is mutually exclusive with `hasObservationType` when set to
+`HAS_NONE` — rejected at the Zod validation layer (`lib/validations/observer-console.ts`) before
+either the read model or the repository ever sees it.
+
+**What Observer Console v1 deliberately has not built yet:**
+
+- No pagination — a 50-result cap stands in for it; revisit only if it becomes a real problem.
+- No real-time updates — every page is a plain Server Component read, refreshed on navigation.
+- Any write or annotation capability — this is a viewer, not a workbench. Adding one is a new,
+  separate decision, not an extension of this milestone.
+- Decision rendering — no `DecisionRecord` data is surfaced here yet; wiring it in is future work
+  once there's a concrete need, not stubbed in advance.
+- Fixing `CUSTOMER_GHOSTED`'s `MESSAGE_RECEIVED`-path semantics (see above) — this console only
+  surfaces what the engine actually does, honestly; it doesn't correct it.
+
+---
+
+**Status:** §1–§10 is the original proposal (partially superseded, see above). Part II (§11–§20)
+reflects what has actually been built and tested as of the Observer Console v1 phase.

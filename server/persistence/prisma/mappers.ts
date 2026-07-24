@@ -11,15 +11,21 @@ import type {
   DecisionEvent as DecisionEventRow,
   AdvisorAction as AdvisorActionRow,
   Outcome as OutcomeRow,
+  DomainEvent as DomainEventRow,
+  Observation as ObservationRow,
 } from "../../db/generated/client";
+import type { DomainEvent } from "../../domain-events/types";
 import type { ConversationIntelligenceResult } from "../../intelligence/types";
 import type { KoriDecision } from "../../intelligence/decision/types";
+import type { Observation } from "../../intelligence/observation/types";
 import type {
   AdvisorActionRecord,
   DecisionEventRecord,
   OutcomeRecord,
   SavedConversationSnapshot,
   SavedDecisionRecord,
+  SavedDomainEventRecord,
+  SavedObservationRecord,
 } from "../types";
 
 /** Cast helper for the write side: our domain types are always plain JSON-safe data. */
@@ -131,6 +137,65 @@ export function toOutcomeDomain(row: OutcomeRow): OutcomeRecord {
     outcomeType: row.outcomeType,
     attribution: row.attribution,
     notes: row.notes,
+    occurredAt: row.occurredAt,
+    createdAt: row.createdAt,
+  };
+}
+
+/**
+ * Postgres JSONB has no Date type — every Date nested inside `payload` comes
+ * back as an ISO string after the round trip, even though the domain type
+ * says Date. `occurredAt` is revived from the row's own dedicated column
+ * (never re-parsed from the JSON copy); the handful of event-specific nested
+ * dates (MessageReceivedEvent.previousEntry.occurredAt,
+ * ConversationClosedEvent.lastEntryAt) are revived explicitly per type.
+ */
+function reviveDomainEventDates(payload: DomainEvent, occurredAt: Date): DomainEvent {
+  const event = { ...payload, occurredAt };
+  switch (event.type) {
+    case "MESSAGE_RECEIVED":
+      return {
+        ...event,
+        previousEntry: event.previousEntry
+          ? { ...event.previousEntry, occurredAt: new Date(event.previousEntry.occurredAt) }
+          : undefined,
+      };
+    case "CONVERSATION_CLOSED":
+      return { ...event, lastEntryAt: new Date(event.lastEntryAt) };
+    default:
+      return event;
+  }
+}
+
+export function toDomainEventDomain(row: DomainEventRow): SavedDomainEventRecord {
+  const rawEvent = row.payload as unknown as DomainEvent;
+
+  return {
+    id: row.id,
+    businessId: row.businessId,
+    conversationId: row.conversationId,
+    conversationEntryId: row.conversationEntryId,
+    eventType: row.eventType,
+    event: reviveDomainEventDates(rawEvent, row.occurredAt),
+    occurredAt: row.occurredAt,
+    createdAt: row.createdAt,
+  };
+}
+
+export function toObservationDomain(row: ObservationRow): SavedObservationRecord {
+  const observation: Observation = {
+    type: row.type,
+    summary: row.summary,
+    evidence: row.evidence as unknown as Observation["evidence"],
+  };
+
+  return {
+    id: row.id,
+    businessId: row.businessId,
+    conversationId: row.conversationId,
+    domainEventId: row.domainEventId,
+    conversationEntryId: row.conversationEntryId,
+    observation,
     occurredAt: row.occurredAt,
     createdAt: row.createdAt,
   };
