@@ -9,8 +9,8 @@ export async function listLeads(businessId: string) {
   });
 }
 
-export async function getLead(businessId: string, leadId: string) {
-  return prisma.lead.findFirst({
+export async function getLead(businessId: string, leadId: string, db: PrismaClientOrTransaction = prisma) {
+  return db.lead.findFirst({
     where: { id: leadId, businessId },
     include: {
       conversations: {
@@ -18,6 +18,10 @@ export async function getLead(businessId: string, leadId: string) {
         include: { entries: { orderBy: { occurredAt: "asc" } } },
       },
       followUps: { orderBy: { dueAt: "asc" } },
+      // Sprint 7 — Lead Commercial State's relative-date extractor needs the
+      // business's timezone; selecting it here avoids a second query on the
+      // Lead page (server/lead-commercial-state/build-lead-commercial-state.ts).
+      business: { select: { timezone: true } },
     },
   });
 }

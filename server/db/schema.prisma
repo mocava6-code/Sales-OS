@@ -194,6 +194,11 @@ model Business {
   // in both directions would make the very first insert impossible.
   ownerUserId String?
   createdAt   DateTime @default(now())
+  // IANA timezone identifier (e.g. "America/Lima") — Sprint 7's Lead
+  // Commercial State relative-date extractor resolves expressions like
+  // "mañana a las 12" in this timezone before converting to UTC for
+  // storage. Defaulted so every existing row stays valid without a backfill.
+  timezone    String   @default("America/Lima")
 
   users          User[]
   leads          Lead[]

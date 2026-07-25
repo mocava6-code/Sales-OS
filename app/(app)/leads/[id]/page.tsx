@@ -4,6 +4,10 @@ import { verifySession } from "@/lib/auth/dal";
 import { getLead } from "@/server/services/lead-service";
 import { Card } from "@/components/ui/Card";
 import { FollowUpItem } from "@/components/follow-ups/FollowUpItem";
+import { LeadCommercialStateCard } from "@/components/leads/LeadCommercialStateCard";
+import { buildLeadCommercialState } from "@/server/lead-commercial-state/build-lead-commercial-state";
+import { NoConversationsForLeadError } from "@/server/intelligence/lead-commercial-state/errors";
+import type { LeadCommercialStateDTO } from "@/server/lead-commercial-state/types";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -12,6 +16,18 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
   if (!lead) {
     notFound();
+  }
+
+  // A lead with no conversations yet has no commercial state to derive —
+  // the card is simply omitted (same "not yet" spirit as the empty states
+  // already used below for follow-ups/conversations), not an error.
+  let commercialState: LeadCommercialStateDTO | null = null;
+  try {
+    commercialState = buildLeadCommercialState(lead, lead.business.timezone);
+  } catch (error) {
+    if (!(error instanceof NoConversationsForLeadError)) {
+      throw error;
+    }
   }
 
   const pendingFollowUps = lead.followUps.filter((f) => f.status === "PENDING");
@@ -43,6 +59,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           Add follow-up
         </Link>
       </div>
+
+      {commercialState && <LeadCommercialStateCard state={commercialState} />}
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-neutral-500">Follow-ups</h2>
