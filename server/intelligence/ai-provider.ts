@@ -3,6 +3,7 @@ import type {
   DecisionReasoningCapability,
   DraftGenerationCapability,
   EmbeddingCapability,
+  KnowledgeExtractionCapability,
   SpeechCapability,
   VisionCapability,
 } from "./capabilities";
@@ -10,6 +11,7 @@ import type {
 export interface AIProviderCapabilities {
   conversationAnalysis?: ConversationAnalysisCapability;
   decisionReasoning?: DecisionReasoningCapability;
+  knowledgeExtraction?: KnowledgeExtractionCapability;
   draftGeneration?: DraftGenerationCapability;
   vision?: VisionCapability;
   embedding?: EmbeddingCapability;

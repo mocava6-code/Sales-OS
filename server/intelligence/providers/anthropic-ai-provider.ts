@@ -3,6 +3,7 @@ import type { AIProvider } from "../ai-provider";
 import type {
   ConversationAnalysisCapability,
   DecisionReasoningCapability,
+  KnowledgeExtractionCapability,
   ModelCompletionRequest,
   ModelCompletionResponse,
 } from "../capabilities";
@@ -88,11 +89,14 @@ function extractJsonCandidate(rawText: string): string {
   return trimmed;
 }
 
-// Both ConversationAnalysisCapability and DecisionReasoningCapability are
-// "raw prompt in, raw text out" today — one implementation backs both named
-// capability slots. If either ever needs different generation settings or
-// error handling, this is the one place that would split.
-function createCompletionCapability(sendMessage: SendMessage): ConversationAnalysisCapability & DecisionReasoningCapability {
+// ConversationAnalysisCapability, DecisionReasoningCapability, and
+// KnowledgeExtractionCapability are all "raw prompt in, raw text out" today
+// — one implementation backs all three named capability slots. If any of
+// them ever needs different generation settings or error handling, this is
+// the one place that would split.
+function createCompletionCapability(
+  sendMessage: SendMessage,
+): ConversationAnalysisCapability & DecisionReasoningCapability & KnowledgeExtractionCapability {
   return {
     async complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse> {
       let rawText: string;
@@ -130,6 +134,7 @@ export function createAnthropicAIProvider(config: AnthropicAIProviderConfig): AI
     capabilities: {
       conversationAnalysis: completion,
       decisionReasoning: completion,
+      knowledgeExtraction: completion,
     },
   };
 }

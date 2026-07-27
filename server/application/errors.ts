@@ -9,6 +9,7 @@
 
 import { AICapabilityNotSupportedError, ModelProviderError } from "../intelligence/errors";
 import { CriticalInformationMissingError, DecisionReasoningUnavailableError } from "../intelligence/decision/errors";
+import { InvalidCandidateStatusTransitionError, KnowledgeCandidateNotFoundError } from "../knowledge/errors";
 import {
   ConversationAnalysisFailedError,
   DecisionGenerationFailedError,
@@ -120,6 +121,14 @@ export function toApplicationError(error: unknown): ApplicationError {
 
   if (error instanceof InvalidDecisionStatusTransitionError) {
     return { code: "INVALID_TRANSITION", message: `This decision can't move from ${error.from} to ${error.to}.` };
+  }
+
+  if (error instanceof KnowledgeCandidateNotFoundError) {
+    return { code: "NOT_FOUND", message: "That knowledge candidate could not be found." };
+  }
+
+  if (error instanceof InvalidCandidateStatusTransitionError) {
+    return { code: "INVALID_TRANSITION", message: `This candidate can't move from ${error.from} to ${error.to} — it's already been reviewed.` };
   }
 
   if (error instanceof OutcomeNotAllowedForDecisionStatusError || error instanceof MissingOutcomeAttributionError) {

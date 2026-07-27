@@ -35,6 +35,17 @@ export interface DecisionReasoningCapability {
   complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse>;
 }
 
+/**
+ * Used by the Knowledge Ingestion pipeline (server/knowledge/extract.ts) to
+ * turn an imported WhatsApp conversation or a crawled website page into
+ * structured knowledge-candidate proposals. Structurally identical to
+ * ConversationAnalysisCapability/DecisionReasoningCapability today — same
+ * reasoning for keeping it a separate named slot.
+ */
+export interface KnowledgeExtractionCapability {
+  complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse>;
+}
+
 // --- Architectural placeholders -------------------------------------------
 //
 // Intentionally empty. A real method signature here would be a guess until

@@ -1,5 +1,11 @@
 import type { AIProvider } from "../ai-provider";
-import type { ConversationAnalysisCapability, DecisionReasoningCapability, ModelCompletionRequest, ModelCompletionResponse } from "../capabilities";
+import type {
+  ConversationAnalysisCapability,
+  DecisionReasoningCapability,
+  KnowledgeExtractionCapability,
+  ModelCompletionRequest,
+  ModelCompletionResponse,
+} from "../capabilities";
 
 export interface MockAIProviderOptions {
   name?: string;
@@ -12,6 +18,10 @@ export interface MockAIProviderOptions {
   decisionReasoningResponse?: string | ((request: ModelCompletionRequest) => string);
   /** If set, decisionReasoning.complete() throws this instead of returning a response. */
   decisionReasoningThrowError?: Error;
+  /** Raw text to return from knowledgeExtraction, or a function computing it from the actual request. */
+  knowledgeExtractionResponse?: string | ((request: ModelCompletionRequest) => string);
+  /** If set, knowledgeExtraction.complete() throws this instead of returning a response. */
+  knowledgeExtractionThrowError?: Error;
 }
 
 export interface MockAIProvider {
@@ -20,6 +30,8 @@ export interface MockAIProvider {
   getLastRequest(): ModelCompletionRequest | undefined;
   getDecisionReasoningCallCount(): number;
   getLastDecisionReasoningRequest(): ModelCompletionRequest | undefined;
+  getKnowledgeExtractionCallCount(): number;
+  getLastKnowledgeExtractionRequest(): ModelCompletionRequest | undefined;
 }
 
 export function createMockAIProvider(options: MockAIProviderOptions = {}): MockAIProvider {
@@ -27,6 +39,8 @@ export function createMockAIProvider(options: MockAIProviderOptions = {}): MockA
   let lastRequest: ModelCompletionRequest | undefined;
   let decisionReasoningCallCount = 0;
   let lastDecisionReasoningRequest: ModelCompletionRequest | undefined;
+  let knowledgeExtractionCallCount = 0;
+  let lastKnowledgeExtractionRequest: ModelCompletionRequest | undefined;
 
   const conversationAnalysis: ConversationAnalysisCapability = {
     async complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse> {
@@ -61,10 +75,28 @@ export function createMockAIProvider(options: MockAIProviderOptions = {}): MockA
     },
   };
 
+  const knowledgeExtraction: KnowledgeExtractionCapability = {
+    async complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse> {
+      knowledgeExtractionCallCount += 1;
+      lastKnowledgeExtractionRequest = request;
+
+      if (options.knowledgeExtractionThrowError) {
+        throw options.knowledgeExtractionThrowError;
+      }
+
+      const rawText =
+        typeof options.knowledgeExtractionResponse === "function"
+          ? options.knowledgeExtractionResponse(request)
+          : (options.knowledgeExtractionResponse ?? '{"candidates":[]}');
+
+      return { rawText };
+    },
+  };
+
   const provider: AIProvider = {
     name: options.name ?? "mock-provider",
     modelName: options.modelName ?? "mock-model-1",
-    capabilities: { conversationAnalysis, decisionReasoning },
+    capabilities: { conversationAnalysis, decisionReasoning, knowledgeExtraction },
   };
 
   return {
@@ -73,5 +105,7 @@ export function createMockAIProvider(options: MockAIProviderOptions = {}): MockA
     getLastRequest: () => lastRequest,
     getDecisionReasoningCallCount: () => decisionReasoningCallCount,
     getLastDecisionReasoningRequest: () => lastDecisionReasoningRequest,
+    getKnowledgeExtractionCallCount: () => knowledgeExtractionCallCount,
+    getLastKnowledgeExtractionRequest: () => lastKnowledgeExtractionRequest,
   };
 }

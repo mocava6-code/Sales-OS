@@ -85,6 +85,10 @@ enum KnowledgeCategory {
   FAQ
   RECOMMENDED_RESPONSE
   LOGISTICS
+  // Knowledge Ingestion v1 — explicit first-class category (not a loose
+  // string) so pricing candidates/items are subject to the stricter
+  // freshness/no-auto-promotion rules in server/knowledge/**.
+  PRICING
 }
 
 // Mirrors server/intelligence/decision/types.ts DecisionType exactly — the
@@ -187,8 +191,8 @@ enum OutcomeAttribution {
 // ── Models ───────────────────────────────────────────────────────────────
 
 model Business {
-  id        String   @id @default(uuid())
-  name      String   @unique
+  id          String   @id @default(uuid())
+  name        String   @unique
   // Logical pointer to the owning User, intentionally not an enforced FK:
   // Business and User each require the other to exist, so a hard relation
   // in both directions would make the very first insert impossible.
@@ -200,18 +204,26 @@ model Business {
   // storage. Defaulted so every existing row stays valid without a backfill.
   timezone    String   @default("America/Lima")
 
-  users          User[]
-  leads          Lead[]
-  conversations  Conversation[]
-  knowledgeItems KnowledgeItem[]
-  dailyInsights  DailyInsight[]
-  conversationSnapshots ConversationSnapshot[]
-  decisionRecords       DecisionRecord[]
+  users                    User[]
+  leads                    Lead[]
+  conversations            Conversation[]
+  knowledgeItems           KnowledgeItem[]
+  dailyInsights            DailyInsight[]
+  conversationSnapshots    ConversationSnapshot[]
+  decisionRecords          DecisionRecord[]
   conversationAnalysisRuns ConversationAnalysisRun[]
   whatsappPhoneNumbers     WhatsAppPhoneNumber[]
   pendingWhatsAppMessages  PendingWhatsAppMessage[]
   domainEvents             DomainEvent[]
   observations             Observation[]
+
+  // Knowledge Ingestion v1
+  knowledgeSources                KnowledgeSource[]
+  importedConversations           ImportedConversation[]
+  websitePages                    WebsitePage[]
+  knowledgeCandidates             KnowledgeCandidate[]
+  knowledgeCandidateRelationships KnowledgeCandidateRelationship[]
+  operationalInsights             OperationalInsight[]
 
   @@map("businesses")
 }
@@ -230,13 +242,18 @@ model User {
   business   Business @relation(fields: [businessId], references: [id])
   createdAt  DateTime @default(now())
 
-  assignedLeads        Lead[]              @relation("LeadAssignee")
-  followUps            FollowUp[]
-  conversationsCreated Conversation[]      @relation("ConversationCreatedBy")
-  knowledgeItemsCreated KnowledgeItem[]
-  dailyInsights         DailyInsight[]
+  assignedLeads          Lead[]                   @relation("LeadAssignee")
+  followUps              FollowUp[]
+  conversationsCreated   Conversation[]           @relation("ConversationCreatedBy")
+  knowledgeItemsCreated  KnowledgeItem[]          @relation("KnowledgeItemCreatedBy")
+  dailyInsights          DailyInsight[]
   advisorActions         AdvisorAction[]
   queuedWhatsAppMessages PendingWhatsAppMessage[]
+
+  // Knowledge Ingestion v1
+  knowledgeSourcesCreated     KnowledgeSource[]
+  knowledgeItemsApproved      KnowledgeItem[]      @relation("KnowledgeItemApprovedBy")
+  operationalInsightsApproved OperationalInsight[] @relation("OperationalInsightApprovedBy")
 
   @@map("users")
 }
@@ -262,36 +279,36 @@ model Lead {
 }
 
 model Conversation {
-  id                 String              @id @default(uuid())
-  businessId         String
-  business           Business            @relation(fields: [businessId], references: [id])
-  leadId             String
-  lead               Lead                @relation(fields: [leadId], references: [id])
-  channel            ConversationChannel @default(WHATSAPP)
-  source             ConversationSource
-  status             ConversationStatus  @default(NEEDS_REPLY)
-  lastEntryAt        DateTime
-  lastEntryDirection EntryDirection
+  id                    String               @id @default(uuid())
+  businessId            String
+  business              Business             @relation(fields: [businessId], references: [id])
+  leadId                String
+  lead                  Lead                 @relation(fields: [leadId], references: [id])
+  channel               ConversationChannel  @default(WHATSAPP)
+  source                ConversationSource
+  status                ConversationStatus   @default(NEEDS_REPLY)
+  lastEntryAt           DateTime
+  lastEntryDirection    EntryDirection
   // Populated by a later milestone (AI summarization). Always null for now.
-  aiSummary          String?
+  aiSummary             String?
   // Nullable since WhatsApp Business Integration v1: a conversation created
   // by an inbound webhook has no human creator. Manual-entry conversations
   // (source = MANUAL_PASTE/MANUAL_ENTRY) always still set this.
-  createdByUserId    String?
-  createdBy          User?               @relation("ConversationCreatedBy", fields: [createdByUserId], references: [id])
+  createdByUserId       String?
+  createdBy             User?                @relation("ConversationCreatedBy", fields: [createdByUserId], references: [id])
   // Which of the business's WhatsApp numbers this thread belongs to — set
   // once at creation from the inbound webhook's resolved number, reused for
   // every outbound reply in the thread. Null for non-WhatsApp conversations.
   whatsappPhoneNumberId String?
   whatsappPhoneNumber   WhatsAppPhoneNumber? @relation(fields: [whatsappPhoneNumberId], references: [id])
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
 
-  entries                ConversationEntry[]
-  insightEvidence        InsightEvidence[]
-  snapshots              ConversationSnapshot[]
-  decisionRecords        DecisionRecord[]
-  analysisRuns           ConversationAnalysisRun[]
+  entries                 ConversationEntry[]
+  insightEvidence         InsightEvidence[]
+  snapshots               ConversationSnapshot[]
+  decisionRecords         DecisionRecord[]
+  analysisRuns            ConversationAnalysisRun[]
   pendingWhatsAppMessages PendingWhatsAppMessage[]
   domainEvents            DomainEvent[]
   observations            Observation[]
@@ -359,9 +376,31 @@ model KnowledgeItem {
   category        KnowledgeCategory
   tags            String[]
   createdByUserId String
-  createdBy       User              @relation(fields: [createdByUserId], references: [id])
+  createdBy       User              @relation("KnowledgeItemCreatedBy", fields: [createdByUserId], references: [id])
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+
+  // Knowledge Ingestion v1 — every row in this table is created exclusively
+  // by an OWNER approving a KnowledgeCandidate (server/knowledge/promotion.ts);
+  // there is no auto-promotion path and no manual "Teach Sales OS" form, so
+  // approvedByUserId/approvedAt are required, not optional. Confirmed safe as
+  // a required-column migration: both the pilot and test databases had zero
+  // KnowledgeItem rows at the time this was added (see migration comment).
+  status             KnowledgeItemStatus @default(ACTIVE)
+  confidence         Float?
+  originCandidateId  String?
+  approvedByUserId   String
+  approvedBy         User                @relation("KnowledgeItemApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt         DateTime
+  // Self-relation — the newer, OWNER-approved item that replaced this one.
+  // Never hard-deleted; SUPERSEDED items are excluded from any future
+  // retrieval use but stay in the audit trail.
+  supersededByItemId String?
+  // Required at promotion time for PRICING/COMMERCIAL_POLICY/PROMOTION —
+  // stricter freshness rule than other categories (Sprint 8 policy).
+  expiresAt          DateTime?
+
+  candidateRelationships KnowledgeCandidateRelationship[]
 
   @@index([businessId])
   @@map("knowledge_items")
@@ -496,12 +535,12 @@ model DecisionRecord {
   status DecisionStatus @default(PROPOSED)
 
   // Versioning (KoriDecisionMetadata) — never overwritten.
-  engineSchemaVersion                        Int
-  promptVersion                              String
-  aiProvider                                 String
-  modelName                                  String
-  decidedAt                                  DateTime
-  sourceConversationIntelligenceGeneratedAt  DateTime?
+  engineSchemaVersion                       Int
+  promptVersion                             String
+  aiProvider                                String
+  modelName                                 String
+  decidedAt                                 DateTime
+  sourceConversationIntelligenceGeneratedAt DateTime?
 
   createdAt DateTime @default(now())
 
@@ -521,13 +560,13 @@ model DecisionRecord {
 // commercial event for a decision. Never aggregated or summarized in place —
 // a future Learning Engine reconstructs history by replaying these rows.
 model DecisionEvent {
-  id               String         @id @default(uuid())
+  id               String            @id @default(uuid())
   decisionRecordId String
-  decisionRecord   DecisionRecord @relation(fields: [decisionRecordId], references: [id])
+  decisionRecord   DecisionRecord    @relation(fields: [decisionRecordId], references: [id])
   eventType        DecisionEventType
   note             String?
-  occurredAt       DateTime       @default(now())
-  createdAt        DateTime       @default(now())
+  occurredAt       DateTime          @default(now())
+  createdAt        DateTime          @default(now())
 
   @@index([decisionRecordId, occurredAt])
   @@map("decision_events")
@@ -537,15 +576,15 @@ model DecisionEvent {
 // — a decision can accumulate more than one AdvisorAction over time (e.g.
 // "partially followed" now, "custom action" logged later).
 model AdvisorAction {
-  id               String         @id @default(uuid())
+  id               String            @id @default(uuid())
   decisionRecordId String
-  decisionRecord   DecisionRecord @relation(fields: [decisionRecordId], references: [id])
+  decisionRecord   DecisionRecord    @relation(fields: [decisionRecordId], references: [id])
   actionType       AdvisorActionType
   advisorUserId    String?
-  advisor          User?          @relation(fields: [advisorUserId], references: [id])
+  advisor          User?             @relation(fields: [advisorUserId], references: [id])
   notes            String?
-  occurredAt       DateTime       @default(now())
-  createdAt        DateTime       @default(now())
+  occurredAt       DateTime          @default(now())
+  createdAt        DateTime          @default(now())
 
   @@index([decisionRecordId])
   @@map("advisor_actions")
@@ -648,16 +687,16 @@ model PendingWhatsAppMessage {
   status                PendingWhatsAppMessageStatus @default(WAITING_APPROVAL)
   // Optional — set when this reply originated from a Kori recommendation
   // the advisor approved, rather than a fully manual reply.
-  decisionRecordId String?
-  decisionRecord   DecisionRecord? @relation(fields: [decisionRecordId], references: [id])
-  createdByUserId  String?
-  createdBy        User?           @relation(fields: [createdByUserId], references: [id])
+  decisionRecordId      String?
+  decisionRecord        DecisionRecord?              @relation(fields: [decisionRecordId], references: [id])
+  createdByUserId       String?
+  createdBy             User?                        @relation(fields: [createdByUserId], references: [id])
   // Meta's wamid, set once the sender successfully calls the Graph API.
-  externalId     String? @unique
-  failureReason  String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  sentAt         DateTime?
+  externalId            String?                      @unique
+  failureReason         String?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  sentAt                DateTime?
 
   statusEvents WhatsAppMessageStatusEvent[]
 
@@ -769,4 +808,440 @@ model WhatsAppMessageStatusEvent {
   @@unique([pendingMessageId, status])
   @@index([pendingMessageId])
   @@map("whatsapp_message_status_events")
+}
+
+// ── Knowledge Ingestion v1 (Sprint 8) ───────────────────────────────────
+//
+// Knowledge is acquired automatically from existing operational sources
+// (the Koriaki website, historical/live WhatsApp conversations) — never
+// through a manual "Teach Sales OS" form. Every source converges on the
+// same candidate pipeline (server/knowledge/**): Source -> extracted
+// candidate -> normalization -> duplicate/conflict detection -> Knowledge
+// Base. No candidate is ever auto-promoted into organizational truth in v1
+// — KnowledgeItem/OperationalInsight rows only exist because an OWNER
+// explicitly approved a KnowledgeCandidate.
+
+enum KnowledgeSourceType {
+  WEBSITE
+  WHATSAPP_IMPORT
+}
+
+enum KnowledgeSourceStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  // Some units (pages/messages) failed while others succeeded — distinct
+  // from FAILED, which means the run produced nothing usable.
+  PARTIAL
+  FAILED
+}
+
+enum ExternalConversationSource {
+  WHATSAPP_TXT_EXPORT
+  WHATSAPP_ZIP_EXPORT
+  PASTED_TEXT
+}
+
+// WhatsApp export date order is import-level configuration, never inferred
+// independently per message — see ImportedConversation.dateOrder.
+enum ImportDateOrder {
+  DMY
+  MDY
+}
+
+enum ImportedMessageRole {
+  BUSINESS
+  CUSTOMER
+  UNKNOWN
+}
+
+enum ImportedConversationResolutionMethod {
+  DETERMINISTIC_USER_MATCH
+  MANUAL_PROMPT
+  UNRESOLVED
+}
+
+// Per-page work-item state for the bounded incremental crawl batch runner
+// (server/knowledge/website/sync-runner.ts). A future real queue/worker can
+// replace whatever drives "process the next batch of DISCOVERED pages"
+// without changing this column or any KnowledgeSource/candidate contract.
+enum WebsitePageStatus {
+  DISCOVERED
+  FETCHED
+  EXTRACTED
+  SKIPPED_UNCHANGED
+  FAILED
+}
+
+// Page-level *dominant* classification (WebsitePage.pageContext) — the
+// authoritative classification for extraction purposes is per section/chunk
+// (see KnowledgeCandidateEvidence.chunkContext and ExtractionDocumentInput
+// in server/knowledge/extraction-input.ts), since a PRODUCT page can embed a
+// TESTIMONIAL blockquote that must never inherit PRODUCT-level authority.
+enum WebsitePageContext {
+  PRODUCT
+  SERVICE
+  FAQ
+  POLICY
+  MARKETING
+  TESTIMONIAL
+  UNKNOWN
+}
+
+enum KnowledgeCandidateClass {
+  FACTUAL
+  BEHAVIORAL
+}
+
+// Deterministic summary state, derived from the KnowledgeCandidateRelationship
+// log — never written directly by the LLM. APPROVED/REJECTED are terminal
+// and are reached only by an explicit OWNER action (no auto-promotion in v1).
+// Once CONFLICT, later EQUIVALENT evidence appends/reinforces occurrenceCount
+// but never silently reverts status back to REINFORCED — see
+// server/knowledge/candidate-status.ts.
+enum KnowledgeCandidateStatus {
+  NEW
+  REINFORCED
+  CONFLICT
+  APPROVED
+  REJECTED
+}
+
+// Output of the grounded LLM relationship-classification step
+// (server/knowledge/relationship-classifier.ts) — advisory only. The
+// classification never directly writes KnowledgeCandidate.status, promotes,
+// supersedes, or deletes anything; a deterministic function does.
+enum RelationshipClassification {
+  EQUIVALENT
+  CONTRADICTORY
+  RELATED
+  UNRELATED
+}
+
+enum EvidenceRefType {
+  IMPORTED_MESSAGE
+  WEBSITE_PAGE
+  // Not populated by anything in this sprint — reserved for when the live
+  // WhatsApp pipeline (messages / smb_message_echoes / coexistence history
+  // sync) feeds this same extraction pipeline via ConversationEntry.
+  CONVERSATION_ENTRY
+}
+
+enum BehaviorCategory {
+  PROCESS_PATTERN
+  SALES_BEHAVIOR
+  CUSTOMER_PATTERN
+}
+
+enum KnowledgeItemStatus {
+  ACTIVE
+  SUPERSEDED
+  ARCHIVED
+}
+
+// One row per ingestion run: a single WhatsApp conversation import, or one
+// website crawl. Shared parent so app/(app)/knowledge/sources can list both
+// kinds from a single query, and so KnowledgeCandidate/KnowledgeCandidateEvidence
+// have one real FK to point provenance at regardless of source kind.
+model KnowledgeSource {
+  id         String                @id @default(uuid())
+  businessId String
+  business   Business              @relation(fields: [businessId], references: [id])
+  sourceType KnowledgeSourceType
+  label      String
+  status     KnowledgeSourceStatus @default(PENDING)
+
+  // Source-agnostic progress counters for the pollable Sync
+  // started->PROCESSING->progress->COMPLETED/PARTIAL/FAILED UI. Both the v1
+  // in-process bounded-batch runner and any future real queue/worker write
+  // the same three fields — no contract change either way.
+  progressTotal     Int?
+  progressCompleted Int?
+  progressFailed    Int?
+
+  lastSyncedAt   DateTime? // website only
+  // {messagesAnalyzed, candidatesFound, reinforced, conflicts} — feeds the
+  // Knowledge UI's post-analyze summary line verbatim.
+  lastRunSummary Json?
+  errorMessage   String?
+  // Soft-delete — forward-compat for a future deletion UI/retention policy
+  // (see ImportedMessage's doc comment). Not acted on by any code in v1.
+  deletedAt      DateTime?
+
+  createdByUserId String
+  createdBy       User     @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+
+  importedConversations ImportedConversation[]
+  websitePages          WebsitePage[]
+  originatedCandidates  KnowledgeCandidate[]         @relation("OriginatedCandidates")
+  evidence              KnowledgeCandidateEvidence[]
+
+  @@index([businessId])
+  @@map("knowledge_sources")
+}
+
+model ImportedConversation {
+  id         String          @id @default(uuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id])
+  sourceId   String
+  source     KnowledgeSource @relation(fields: [sourceId], references: [id])
+
+  externalSource       ExternalConversationSource
+  // The raw export's own chat identifier/filename — distinct from `id`,
+  // which is ours. Kept for cross-referencing a re-import against the source.
+  sourceConversationId String
+  participantLabels    String[]
+
+  // Decision (Sprint 8 review): date order and timezone are import-level
+  // configuration, defaulted for the Koriaki/Peru pilot, never inferred
+  // independently per message.
+  dateOrder ImportDateOrder @default(DMY)
+  timezone  String          @default("America/Lima")
+
+  // Participant-role resolution metadata (not manual knowledge entry) — see
+  // ImportedMessage.resolvedRole. Deterministic identity match is attempted
+  // first; DETERMINISTIC_USER_MATCH/MANUAL_PROMPT/UNRESOLVED records which
+  // path was taken so a re-analysis doesn't need to re-ask the question.
+  resolvedBusinessSenderLabel String?
+  resolutionMethod            ImportedConversationResolutionMethod?
+
+  // sha256 of the uploaded file's bytes — dedupes re-uploads of the same
+  // export (a duplicate hash short-circuits to "already imported").
+  rawFileHash   String?
+  // Ambiguous senders/unparseable timestamps encountered during parsing —
+  // never silently dropped, always surfaced here.
+  parseWarnings Json?
+  importedAt    DateTime @default(now())
+
+  messages ImportedMessage[]
+
+  @@index([businessId])
+  @@index([sourceId])
+  @@map("imported_conversations")
+}
+
+model ImportedMessage {
+  id                     String               @id @default(uuid())
+  importedConversationId String
+  importedConversation   ImportedConversation @relation(fields: [importedConversationId], references: [id], onDelete: Cascade)
+
+  senderLabel   String?
+  resolvedRole  ImportedMessageRole @default(UNKNOWN)
+  // Null — never a guessed date — when the source line's timestamp doesn't
+  // parse cleanly under the conversation's configured dateOrder/timezone.
+  occurredAt    DateTime?
+  // v1 retains this with no automatic purge, so re-extraction on a newer
+  // extractor version doesn't require the original file. This is NOT a
+  // permanent-retention guarantee: actual retention is governed by a future
+  // business data-retention policy. onDelete: Cascade from
+  // ImportedConversation already makes deletion structurally possible
+  // whenever that policy is defined, without a schema change.
+  content       String
+  // Original export line(s) this message was parsed from — provenance/audit,
+  // not read by normal application code.
+  rawLine       String
+  // Preserves original order when occurredAt is null/ambiguous.
+  sequenceIndex Int
+
+  @@index([importedConversationId])
+  @@map("imported_messages")
+}
+
+model WebsitePage {
+  id         String          @id @default(uuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id])
+  sourceId   String
+  source     KnowledgeSource @relation(fields: [sourceId], references: [id])
+
+  url           String
+  canonicalUrl  String?
+  title         String?
+  extractedText String?
+  // sha256(extractedText) — change detection; unchanged pages skip
+  // re-extraction entirely on repeat syncs.
+  contentHash   String?
+  // Page-wide dominant classification only — see the enum doc comment for
+  // why per-chunk context (ExtractionDocumentInput, KnowledgeCandidateEvidence.chunkContext)
+  // is the one that actually gates extraction authority.
+  pageContext   WebsitePageContext @default(UNKNOWN)
+  // Per-page queue state driving the bounded incremental batch runner.
+  status        WebsitePageStatus  @default(DISCOVERED)
+  httpStatus    Int?
+
+  firstSeenAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  lastChangedAt DateTime?
+
+  @@unique([sourceId, url])
+  @@index([businessId])
+  @@index([sourceId, status])
+  @@map("website_pages")
+}
+
+// A reusable-knowledge proposal awaiting review. Never organizational truth
+// on its own — only an OWNER-approved promotion (promoted*Id set) makes it
+// one. `class` routes promotion to two disjoint destination tables so
+// factual product knowledge and behavioral/process insights are never
+// mixed (Sprint 8 Phase 7).
+model KnowledgeCandidate {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  class                    KnowledgeCandidateClass
+  // Exactly one of these two is set, matching `class` — enforced in
+  // application code (server/knowledge/candidate-schema.ts), not a DB
+  // constraint, since a candidate is provisional by definition.
+  proposedFactualCategory  KnowledgeCategory?
+  proposedBehaviorCategory BehaviorCategory?
+
+  subject   String
+  statement String
+
+  // The source where this candidate was FIRST extracted. Reinforcement from
+  // other sources is captured as additional KnowledgeCandidateEvidence rows,
+  // never by changing this field — one candidate can accumulate evidence
+  // from many KnowledgeSources without an ownership/provenance change.
+  originSourceId String
+  originSource   KnowledgeSource @relation("OriginatedCandidates", fields: [originSourceId], references: [id])
+
+  confidence Float
+  // Derived deterministic summary — see KnowledgeCandidateStatus's doc
+  // comment and server/knowledge/candidate-status.ts. Never written by the
+  // LLM directly.
+  status     KnowledgeCandidateStatus @default(NEW)
+
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  occurrenceCount Int      @default(1)
+
+  extractorName    String
+  extractorVersion String
+
+  // Populated only by an explicit OWNER action (server/knowledge/promotion.ts)
+  // — nothing else in this schema ever writes these five fields.
+  promotedKnowledgeItemId      String?
+  promotedOperationalInsightId String?
+  reviewedByUserId             String?
+  reviewedAt                   DateTime?
+  rejectionReason              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  evidence      KnowledgeCandidateEvidence[]
+  relationships KnowledgeCandidateRelationship[] @relation("CandidateRelationshipsFrom")
+  relatedFrom   KnowledgeCandidateRelationship[] @relation("CandidateRelationshipsTo")
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([originSourceId])
+  @@map("knowledge_candidates")
+}
+
+// Append-only log of every comparison made against a candidate — a
+// candidate can be EQUIVALENT to multiple candidates, CONTRADICTORY to more
+// than one approved KnowledgeItem, etc. KnowledgeCandidate.status is derived
+// from this log, never from a single stored pair.
+model KnowledgeCandidateRelationship {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  candidateId String
+  candidate   KnowledgeCandidate @relation("CandidateRelationshipsFrom", fields: [candidateId], references: [id], onDelete: Cascade)
+
+  // Exactly one of the three targets is set — application-enforced, same
+  // discipline as KnowledgeCandidate's proposedFactualCategory/proposedBehaviorCategory split.
+  targetCandidateId          String?
+  targetCandidate            KnowledgeCandidate? @relation("CandidateRelationshipsTo", fields: [targetCandidateId], references: [id])
+  targetKnowledgeItemId      String?
+  targetKnowledgeItem        KnowledgeItem?      @relation(fields: [targetKnowledgeItemId], references: [id])
+  targetOperationalInsightId String?
+  targetOperationalInsight   OperationalInsight? @relation(fields: [targetOperationalInsightId], references: [id])
+
+  classification    RelationshipClassification
+  confidence        Float?
+  classifierName    String?
+  classifierVersion String?
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId])
+  @@index([candidateId])
+  @@index([targetCandidateId])
+  @@index([targetKnowledgeItemId])
+  @@index([targetOperationalInsightId])
+  @@map("knowledge_candidate_relationships")
+}
+
+// One row per occurrence/evidence instance — makes KnowledgeCandidate.occurrenceCount
+// real rather than just a counter, and gives every candidate an exact chain
+// back to import file / URL / message / timestamp / sender.
+model KnowledgeCandidateEvidence {
+  id          String             @id @default(uuid())
+  candidateId String
+  candidate   KnowledgeCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  // Direct FK, independent of candidate.originSourceId — this evidence may
+  // come from a *different* source than the one that first produced the
+  // candidate. Also used for tenant validation without joining through candidate.
+  sourceId String
+  source   KnowledgeSource @relation(fields: [sourceId], references: [id])
+
+  // Polymorphic — justified, unlike KnowledgeCandidate.originSourceId: no
+  // common table exists across the three possible origins.
+  evidenceRefType EvidenceRefType
+  evidenceRefId   String
+  // The minimum relevant grounded excerpt only — never the full source
+  // message/page, and never a copy of an entire conversation.
+  evidenceText    String
+
+  // Set only when evidenceRefType = WEBSITE_PAGE — the section/chunk-level
+  // authority classification in effect when THIS evidence was extracted,
+  // independent of WebsitePage.pageContext's page-wide dominant label (a
+  // TESTIMONIAL chunk on an otherwise PRODUCT page is recorded as
+  // TESTIMONIAL here, never silently inherited as PRODUCT).
+  chunkContext WebsitePageContext?
+
+  occurredAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([candidateId])
+  @@index([sourceId])
+  @@map("knowledge_candidate_evidence")
+}
+
+// Kept structurally separate from KnowledgeItem (never the same table, never
+// the same promotion target) — factual product knowledge and behavioral/
+// process insights must not mix (Sprint 8 Phase 7).
+model OperationalInsight {
+  id         String              @id @default(uuid())
+  businessId String
+  business   Business            @relation(fields: [businessId], references: [id])
+  category   BehaviorCategory
+  statement  String
+  confidence Float
+  status     KnowledgeItemStatus @default(ACTIVE)
+
+  originCandidateId String?
+  occurrenceCount   Int      @default(1)
+  firstObservedAt   DateTime
+  lastObservedAt    DateTime
+
+  // Required — no path creates this row without an explicit OWNER approval.
+  approvedByUserId String
+  approvedBy       User     @relation("OperationalInsightApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  candidateRelationships KnowledgeCandidateRelationship[]
+
+  @@index([businessId])
+  @@map("operational_insights")
 }
