@@ -133,6 +133,20 @@ export interface WhatsAppRawStatus {
   errors?: Array<{ code: number; title: string; message?: string }>;
 }
 
+/**
+ * A message the business sent from the WhatsApp Business app or a linked
+ * device, mirrored to Cloud API via the `smb_message_echoes` webhook field
+ * (Coexistence only). Loosely typed on purpose — see message-normalizer.ts's
+ * normalizeBusinessAppEchoMessage doc comment for why the exact recipient
+ * field is read defensively rather than declared here.
+ */
+export interface WhatsAppRawMessageEcho {
+  id: string; // wamid
+  timestamp: string;
+  type: string; // per-content type, or "revoke" / "edit"
+  [key: string]: unknown;
+}
+
 // --- Normalized (provider-neutral) shapes -----------------------------------
 
 export type NormalizedWhatsAppMessageType =
@@ -206,4 +220,24 @@ export interface NormalizedWhatsAppStatus {
 export interface NormalizedWebhookBatch {
   messages: NormalizedWhatsAppMessage[];
   statuses: NormalizedWhatsAppStatus[];
+}
+
+export type NormalizedWhatsAppBusinessAppMessageSubtype = "NEW" | "EDIT" | "REVOKE";
+
+/**
+ * A business-sent message mirrored from the WhatsApp Business app/linked
+ * device (Coexistence's smb_message_echoes webhook field). Deliberately its
+ * own shape rather than reusing NormalizedWhatsAppMessage: the business is
+ * always the sender here (toPhoneNumber is the customer), and EDIT/REVOKE
+ * subtypes have no inbound-message equivalent.
+ */
+export interface NormalizedWhatsAppBusinessAppMessage {
+  externalId: string;
+  phoneNumberId: string;
+  toPhoneNumber: string;
+  subtype: NormalizedWhatsAppBusinessAppMessageSubtype;
+  messageType: NormalizedWhatsAppMessageType;
+  content: string;
+  occurredAt: Date;
+  raw: unknown;
 }

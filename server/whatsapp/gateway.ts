@@ -29,7 +29,7 @@ import {
   enqueuePendingMessage as enqueuePendingMessageDefault,
   type EnqueuePendingMessageInput,
 } from "./queue";
-import type { NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "./types";
+import type { NormalizedWhatsAppBusinessAppMessage, NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "./types";
 
 /** The conversation entry fields the gateway needs to know about "what happened right before this message" — see MessageReceivedEvent.previousEntry. */
 export interface PreviousEntryRecord {
@@ -71,6 +71,18 @@ export interface StatusEventResult {
   applied: boolean;
 }
 
+export interface BusinessAppEchoResult {
+  duplicate: boolean;
+  /** True for edit/revoke items in v1 — recognized but not persisted, see handleBusinessAppEchoEvent's doc comment. */
+  ignored?: boolean;
+  businessId?: string;
+  leadId?: string;
+  conversationId?: string;
+  entryId?: string;
+  observationsRecorded: boolean;
+  observationError?: unknown;
+}
+
 export interface EnqueueOutboundMessageInput {
   businessId: string;
   conversationId: string;
@@ -84,6 +96,7 @@ export interface EnqueueOutboundMessageInput {
 export interface WhatsAppGateway {
   handleInboundMessage(message: NormalizedWhatsAppMessage): Promise<InboundMessageResult>;
   handleStatusEvent(status: NormalizedWhatsAppStatus): Promise<StatusEventResult>;
+  handleBusinessAppEchoEvent(message: NormalizedWhatsAppBusinessAppMessage): Promise<BusinessAppEchoResult>;
   enqueueOutboundMessage(input: EnqueueOutboundMessageInput): Promise<{ id: string }>;
 }
 
@@ -342,6 +355,111 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         rawPayload: status.raw,
       });
       return { applied: event !== null };
+    },
+
+    /**
+     * Coexistence only — a message the business sent from the WhatsApp
+     * Business app or a linked device, mirrored via smb_message_echoes.
+     * Reuses the exact same lead/conversation/domain-event machinery as
+     * handleInboundMessage above, just persisted as OUTBOUND instead of
+     * INBOUND. Does not trigger analyzeConversationAndCreateDecisions —
+     * Kori's engine only ever reacts to inbound customer messages today;
+     * running it off an agent's own outgoing text is a product decision
+     * for a later phase, not a mechanical extension of this one.
+     *
+     * EDIT/REVOKE items are recognized but deliberately not persisted:
+     * ConversationEntry is append-only everywhere else in this codebase,
+     * and retrofitting in-place mutation is a real schema/behavior change,
+     * not an additive one. TODO(coexistence-v2): if edit/revoke support is
+     * wanted, add explicit nullable columns (e.g. editedContent, revokedAt)
+     * and a dedicated update path — reviewed separately, not bundled here.
+     */
+    async handleBusinessAppEchoEvent(message: NormalizedWhatsAppBusinessAppMessage): Promise<BusinessAppEchoResult> {
+      if (message.subtype === "EDIT" || message.subtype === "REVOKE") {
+        return { duplicate: false, ignored: true, observationsRecorded: false };
+      }
+
+      // Same idempotency check handleInboundMessage uses, on the same
+      // ConversationEntry.externalId space — this is what stops a message
+      // Sales OS already sent via Cloud API (server/whatsapp/sender.ts,
+      // which sets externalId from the Graph API response) from ever being
+      // persisted a second time if it were ever echoed back: whichever path
+      // wrote the entry first wins, and the second path just observes it
+      // already exists. In practice Meta only echoes app/linked-device
+      // sends, never Cloud API sends, so this doubles as a defensive
+      // backstop rather than the primary mechanism.
+      const existingEntry = await deps.findEntryByExternalId(message.externalId);
+      if (existingEntry) {
+        return { duplicate: true, observationsRecorded: false };
+      }
+
+      const phoneNumber = await deps.findPhoneNumberByPhoneNumberId(message.phoneNumberId);
+      if (!phoneNumber) {
+        throw new UnknownPhoneNumberError(message.phoneNumberId);
+      }
+
+      const lead = await deps.findOrCreateLead(phoneNumber.businessId, message.toPhoneNumber);
+      const conversation = await deps.findOrCreateConversation(phoneNumber.businessId, lead.id, phoneNumber.id);
+
+      let entry: { id: string };
+      try {
+        entry = await deps.appendEntry(conversation.id, {
+          direction: "OUTBOUND",
+          content: message.content,
+          messageType: message.messageType,
+          occurredAt: message.occurredAt,
+          externalId: message.externalId,
+          rawPayload: message.raw,
+        });
+      } catch (error) {
+        // Same race as handleInboundMessage's identical catch below it.
+        if (isUniqueConstraintViolation(error)) {
+          return { duplicate: true, observationsRecorded: false };
+        }
+        throw error;
+      }
+
+      let observationsRecorded = false;
+      let observationError: unknown;
+      try {
+        if (conversation.created) {
+          const conversationCreatedEvent: DomainEvent = {
+            type: "CONVERSATION_CREATED",
+            businessId: phoneNumber.businessId,
+            conversationId: conversation.id,
+            leadId: lead.id,
+            channel: "WHATSAPP",
+            source: "WHATSAPP_SYNCED",
+            occurredAt: message.occurredAt,
+          };
+          await deps.recordDomainEvent({ event: conversationCreatedEvent });
+        }
+
+        const messageSentEvent: DomainEvent = {
+          type: "MESSAGE_SENT",
+          businessId: phoneNumber.businessId,
+          conversationId: conversation.id,
+          conversationEntryId: entry.id,
+          content: message.content,
+          externalId: message.externalId,
+          occurredAt: message.occurredAt,
+        };
+        await deps.recordDomainEvent({ event: messageSentEvent, conversationEntryId: entry.id });
+
+        observationsRecorded = true;
+      } catch (error) {
+        observationError = error;
+      }
+
+      return {
+        duplicate: false,
+        businessId: phoneNumber.businessId,
+        leadId: lead.id,
+        conversationId: conversation.id,
+        entryId: entry.id,
+        observationsRecorded,
+        observationError,
+      };
     },
 
     async enqueueOutboundMessage(input: EnqueueOutboundMessageInput) {

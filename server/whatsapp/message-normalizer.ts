@@ -5,6 +5,7 @@
 
 import type {
   NormalizedContactCard,
+  NormalizedWhatsAppBusinessAppMessage,
   NormalizedWhatsAppMessage,
   NormalizedWhatsAppMessageType,
   NormalizedWhatsAppStatus,
@@ -15,6 +16,7 @@ import type {
   WhatsAppRawImageMessage,
   WhatsAppRawLocationMessage,
   WhatsAppRawMessage,
+  WhatsAppRawMessageEcho,
   WhatsAppRawStatus,
   WhatsAppRawStatusValue,
   WhatsAppRawStickerMessage,
@@ -171,4 +173,72 @@ export function normalizeInboundMessage(
       return { ...base, messageType: unknownType, content: `[unsupported message type: ${raw.type}]` };
     }
   }
+}
+
+/**
+ * Meta's documented smb_message_echoes shape doesn't pin down the exact
+ * recipient field name in any primary source we could confirm — this reads
+ * the most likely candidates defensively rather than assuming one. Only
+ * matters for "NEW" echoes (the ones that resolve a Lead/Conversation);
+ * EDIT/REVOKE never need it in v1 (see normalizeBusinessAppEchoMessage).
+ */
+function extractRecipientPhoneNumber(raw: WhatsAppRawMessageEcho): string | undefined {
+  const candidate = raw.to ?? raw.recipient_id ?? raw.wa_id;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+}
+
+function extractEchoContent(raw: WhatsAppRawMessageEcho): { messageType: NormalizedWhatsAppMessageType; content: string } {
+  switch (raw.type) {
+    case "text": {
+      const text = raw.text as { body?: string } | undefined;
+      return { messageType: "TEXT", content: text?.body ?? "" };
+    }
+    case "image": {
+      const image = raw.image as { caption?: string } | undefined;
+      return { messageType: "IMAGE", content: image?.caption ?? "[image]" };
+    }
+    case "document": {
+      const document = raw.document as { caption?: string; filename?: string } | undefined;
+      return { messageType: "DOCUMENT", content: document?.caption ?? document?.filename ?? "[document]" };
+    }
+    case "audio":
+      return { messageType: "AUDIO", content: "[audio]" };
+    case "video": {
+      const video = raw.video as { caption?: string } | undefined;
+      return { messageType: "VIDEO", content: video?.caption ?? "[video]" };
+    }
+    case "sticker":
+      return { messageType: "STICKER", content: "[sticker]" };
+    default:
+      return { messageType: "UNKNOWN", content: `[unsupported message type: ${raw.type}]` };
+  }
+}
+
+/**
+ * Normalizes a Coexistence smb_message_echoes item — a message the business
+ * sent from the WhatsApp Business app or a linked device. EDIT/REVOKE are
+ * recognized but deliberately left content-free: server/whatsapp/gateway.ts's
+ * handleBusinessAppEchoEvent short-circuits them to a no-op in v1 (see its
+ * doc comment), so their exact recipient/content shape is never read.
+ */
+export function normalizeBusinessAppEchoMessage(
+  raw: WhatsAppRawMessageEcho,
+  context: { phoneNumberId: string },
+): NormalizedWhatsAppBusinessAppMessage {
+  const occurredAt = unixSecondsToDate(raw.timestamp);
+  const recipient = extractRecipientPhoneNumber(raw);
+  const base = { externalId: raw.id, phoneNumberId: context.phoneNumberId, occurredAt, raw };
+
+  if (raw.type === "revoke") {
+    return { ...base, toPhoneNumber: recipient ?? "", subtype: "REVOKE", messageType: "UNKNOWN", content: "[message revoked]" };
+  }
+  if (raw.type === "edit") {
+    return { ...base, toPhoneNumber: recipient ?? "", subtype: "EDIT", messageType: "UNKNOWN", content: "[message edited]" };
+  }
+
+  if (!recipient) {
+    throw new Error(`smb_message_echoes item "${raw.id}" is missing a recipient phone number.`);
+  }
+  const { messageType, content } = extractEchoContent(raw);
+  return { ...base, toPhoneNumber: recipient, subtype: "NEW", messageType, content };
 }

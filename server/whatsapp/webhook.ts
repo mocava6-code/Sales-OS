@@ -3,8 +3,8 @@ import "server-only";
 import { z } from "zod";
 import { InvalidWebhookPayloadError } from "./errors";
 import type { WhatsAppGateway } from "./gateway";
-import { normalizeInboundMessage, normalizeStatusEvent } from "./message-normalizer";
-import type { WhatsAppRawContact, WhatsAppRawMessage, WhatsAppRawStatus } from "./types";
+import { normalizeBusinessAppEchoMessage, normalizeInboundMessage, normalizeStatusEvent } from "./message-normalizer";
+import type { WhatsAppRawContact, WhatsAppRawMessage, WhatsAppRawMessageEcho, WhatsAppRawStatus } from "./types";
 import { verifyWebhookSignature, verifyWebhookSubscription } from "./verification";
 
 // The webhook entry point's whole job: verify, receive, validate, normalize,
@@ -41,6 +41,19 @@ const rawStatusSchema = z
   })
   .passthrough();
 
+// Coexistence-only field: messages the business sent from the WhatsApp
+// Business app or a linked device, mirrored to Cloud API. Kept as loose as
+// rawMessageSchema on purpose — see message-normalizer.ts's
+// normalizeBusinessAppEchoMessage doc comment for why the recipient field
+// is read defensively downstream instead of pinned here.
+const rawMessageEchoSchema = z
+  .object({
+    id: z.string().min(1),
+    timestamp: z.string().min(1),
+    type: z.string().min(1),
+  })
+  .passthrough();
+
 const webhookValueSchema = z.object({
   messaging_product: z.literal("whatsapp"),
   metadata: z.object({
@@ -50,6 +63,7 @@ const webhookValueSchema = z.object({
   contacts: z.array(rawContactSchema).optional(),
   messages: z.array(rawMessageSchema).optional(),
   statuses: z.array(rawStatusSchema).optional(),
+  smb_message_echoes: z.array(rawMessageEchoSchema).optional(),
 });
 
 const webhookChangeSchema = z.object({
@@ -79,6 +93,10 @@ export interface WebhookProcessingSummary {
   messagesProcessed: number;
   statusesProcessed: number;
   duplicatesSkipped: number;
+  /** Coexistence smb_message_echoes items successfully persisted as OUTBOUND entries. */
+  echoesProcessed: number;
+  /** Coexistence smb_message_echoes edit/revoke items — recognized but not persisted in v1. */
+  echoesIgnored: number;
   /** One entry per item that failed — a bad item in a batch never aborts the rest. */
   errors: unknown[];
 }
@@ -113,7 +131,14 @@ export async function handleWebhookEvent(
     throw new InvalidWebhookPayloadError("Webhook payload does not match the expected WhatsApp shape.", parsed.error.issues);
   }
 
-  const summary: WebhookProcessingSummary = { messagesProcessed: 0, statusesProcessed: 0, duplicatesSkipped: 0, errors: [] };
+  const summary: WebhookProcessingSummary = {
+    messagesProcessed: 0,
+    statusesProcessed: 0,
+    duplicatesSkipped: 0,
+    echoesProcessed: 0,
+    echoesIgnored: 0,
+    errors: [],
+  };
 
   for (const entry of parsed.data.entry) {
     for (const change of entry.changes) {
@@ -142,6 +167,25 @@ export async function handleWebhookEvent(
           const normalized = normalizeStatusEvent(rawStatus as WhatsAppRawStatus, phoneNumberId);
           await dependencies.gateway.handleStatusEvent(normalized);
           summary.statusesProcessed += 1;
+        } catch (error) {
+          summary.errors.push(error);
+        }
+      }
+
+      // Coexistence only — absent entirely for numbers not onboarded via
+      // Embedded Signup's business-app flow, so this loop is a no-op for
+      // every payload shape that existed before this field was added.
+      for (const rawEcho of value.smb_message_echoes ?? []) {
+        try {
+          const normalized = normalizeBusinessAppEchoMessage(rawEcho as WhatsAppRawMessageEcho, { phoneNumberId });
+          const result = await dependencies.gateway.handleBusinessAppEchoEvent(normalized);
+          if (result.duplicate) {
+            summary.duplicatesSkipped += 1;
+          } else if (result.ignored) {
+            summary.echoesIgnored += 1;
+          } else {
+            summary.echoesProcessed += 1;
+          }
         } catch (error) {
           summary.errors.push(error);
         }

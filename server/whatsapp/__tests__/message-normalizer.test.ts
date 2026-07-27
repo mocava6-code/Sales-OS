@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeInboundMessage, normalizeStatusEvent } from "../message-normalizer";
+import { normalizeBusinessAppEchoMessage, normalizeInboundMessage, normalizeStatusEvent } from "../message-normalizer";
 import type {
   WhatsAppRawAudioMessage,
   WhatsAppRawContact,
@@ -7,6 +7,7 @@ import type {
   WhatsAppRawDocumentMessage,
   WhatsAppRawImageMessage,
   WhatsAppRawLocationMessage,
+  WhatsAppRawMessageEcho,
   WhatsAppRawStatus,
   WhatsAppRawStickerMessage,
   WhatsAppRawTextMessage,
@@ -252,5 +253,82 @@ describe("normalizeStatusEvent", () => {
     expect(result.status).toBe("FAILED");
     expect(result.errorCode).toBe("131047");
     expect(result.errorMessage).toBe("Re-engagement message");
+  });
+});
+
+describe("normalizeBusinessAppEchoMessage — Coexistence smb_message_echoes", () => {
+  it("normalizes a new text echo sent from the WhatsApp Business app", () => {
+    const raw: WhatsAppRawMessageEcho = {
+      id: "wamid.ECHO1",
+      timestamp: TIMESTAMP,
+      type: "text",
+      to: "16315551234",
+      text: { body: "En camino" },
+    };
+
+    const result = normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID });
+
+    expect(result).toMatchObject({
+      externalId: "wamid.ECHO1",
+      phoneNumberId: PHONE_NUMBER_ID,
+      toPhoneNumber: "16315551234",
+      subtype: "NEW",
+      messageType: "TEXT",
+      content: "En camino",
+    });
+    expect(result.occurredAt).toEqual(new Date(1700000000 * 1000));
+    expect(result.raw).toBe(raw);
+  });
+
+  it("normalizes an image echo with a caption", () => {
+    const raw: WhatsAppRawMessageEcho = {
+      id: "wamid.ECHO2",
+      timestamp: TIMESTAMP,
+      type: "image",
+      to: "16315551234",
+      image: { id: "media-1", mime_type: "image/jpeg", caption: "Listo" },
+    };
+
+    const result = normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID });
+
+    expect(result.messageType).toBe("IMAGE");
+    expect(result.content).toBe("Listo");
+  });
+
+  it("falls back to a recipient_id field if to is absent", () => {
+    const raw: WhatsAppRawMessageEcho = {
+      id: "wamid.ECHO3",
+      timestamp: TIMESTAMP,
+      type: "text",
+      recipient_id: "16315551234",
+      text: { body: "Hola" },
+    };
+
+    const result = normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID });
+
+    expect(result.toPhoneNumber).toBe("16315551234");
+  });
+
+  it("throws for a NEW echo with no resolvable recipient — the field name is unconfirmed against Meta's primary schema", () => {
+    const raw: WhatsAppRawMessageEcho = { id: "wamid.ECHO4", timestamp: TIMESTAMP, type: "text", text: { body: "Hola" } };
+
+    expect(() => normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID })).toThrow();
+  });
+
+  it("normalizes a revoke echo without requiring a recipient", () => {
+    const raw: WhatsAppRawMessageEcho = { id: "wamid.ECHO5", timestamp: TIMESTAMP, type: "revoke" };
+
+    const result = normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID });
+
+    expect(result.subtype).toBe("REVOKE");
+    expect(result.externalId).toBe("wamid.ECHO5");
+  });
+
+  it("normalizes an edit echo without requiring a recipient", () => {
+    const raw: WhatsAppRawMessageEcho = { id: "wamid.ECHO6", timestamp: TIMESTAMP, type: "edit" };
+
+    const result = normalizeBusinessAppEchoMessage(raw, { phoneNumberId: PHONE_NUMBER_ID });
+
+    expect(result.subtype).toBe("EDIT");
   });
 });

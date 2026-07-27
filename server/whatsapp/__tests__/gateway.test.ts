@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { UnknownPhoneNumberError } from "../errors";
 import { createWhatsAppGateway, type WhatsAppGatewayDependencies, type WhatsAppPhoneNumberRecord } from "../gateway";
-import type { NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "../types";
+import type { NormalizedWhatsAppBusinessAppMessage, NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "../types";
 
 interface FakeLead {
   id: string;
@@ -393,6 +393,133 @@ describe("WhatsAppGateway.handleStatusEvent", () => {
     const result = await gateway.handleStatusEvent(statusEvent());
 
     expect(result.applied).toBe(false);
+  });
+});
+
+function echoMessage(overrides: Partial<NormalizedWhatsAppBusinessAppMessage> = {}): NormalizedWhatsAppBusinessAppMessage {
+  return {
+    externalId: "wamid.ECHO1",
+    phoneNumberId: "phone-number-id-1",
+    toPhoneNumber: "16315551234",
+    subtype: "NEW",
+    messageType: "TEXT",
+    content: "On my way",
+    occurredAt: new Date("2026-07-20T12:00:00.000Z"),
+    raw: {},
+    ...overrides,
+  };
+}
+
+describe("WhatsAppGateway.handleBusinessAppEchoEvent — Coexistence", () => {
+  it("persists a new echo as an OUTBOUND entry and creates a lead/conversation for a first-time recipient", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleBusinessAppEchoEvent(echoMessage());
+
+    expect(result.duplicate).toBe(false);
+    expect(result.businessId).toBe("biz-1");
+    expect(store.entries.get(result.entryId!)?.direction).toBe("OUTBOUND");
+    expect(store.leads.size).toBe(1);
+    expect(store.conversations.size).toBe(1);
+  });
+
+  it("reuses an existing conversation for the same lead instead of creating a second one", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const inbound = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.IN1", fromPhoneNumber: "16315551234" }));
+    const echo = await gateway.handleBusinessAppEchoEvent(echoMessage({ toPhoneNumber: "16315551234" }));
+
+    expect(echo.conversationId).toBe(inbound.conversationId);
+    expect(store.conversations.size).toBe(1);
+    expect(store.entries.size).toBe(2);
+  });
+
+  it("does not double-persist a wamid already written by a Sales-OS-originated (Cloud API) send", async () => {
+    const { deps, store, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    // Simulate sender.ts/markMessageSent already having written this exact
+    // wamid as an OUTBOUND entry via the Cloud API send path.
+    await deps.appendEntry!("conv-preexisting", {
+      direction: "OUTBOUND",
+      content: "Already sent via Sales OS",
+      messageType: "TEXT",
+      occurredAt: new Date(),
+      externalId: "wamid.ECHO1",
+    });
+    recordDomainEvent.mockClear();
+
+    const result = await gateway.handleBusinessAppEchoEvent(echoMessage({ externalId: "wamid.ECHO1" }));
+
+    expect(result.duplicate).toBe(true);
+    expect(store.entries.size).toBe(1);
+    expect(recordDomainEvent).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent for a redelivered echo of the same wamid", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const first = await gateway.handleBusinessAppEchoEvent(echoMessage());
+    const second = await gateway.handleBusinessAppEchoEvent(echoMessage());
+
+    expect(first.duplicate).toBe(false);
+    expect(second.duplicate).toBe(true);
+    expect(store.entries.size).toBe(1);
+  });
+
+  it("records MESSAGE_SENT (not MESSAGE_RECEIVED) for a new echo", async () => {
+    const { deps, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleBusinessAppEchoEvent(echoMessage());
+
+    const eventTypes = recordDomainEvent.mock.calls.map((call) => call[0].event.type);
+    expect(eventTypes).toEqual(["CONVERSATION_CREATED", "MESSAGE_SENT"]);
+    expect(recordDomainEvent.mock.calls[1][0].event).toMatchObject({ conversationEntryId: result.entryId, content: "On my way" });
+  });
+
+  it("never triggers analysis for an echo — only inbound customer messages do", async () => {
+    const { deps, runAnalysis } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleBusinessAppEchoEvent(echoMessage());
+
+    expect(runAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("throws UnknownPhoneNumberError for a phoneNumberId that isn't registered to any business", async () => {
+    const { deps } = createFakeGatewayDeps({ phoneNumbers: [] });
+    const gateway = createWhatsAppGateway(deps);
+
+    await expect(gateway.handleBusinessAppEchoEvent(echoMessage())).rejects.toBeInstanceOf(UnknownPhoneNumberError);
+  });
+
+  it.each(["EDIT", "REVOKE"] as const)("ignores a %s subtype without persisting anything or recording a domain event", async (subtype) => {
+    const { deps, store, recordDomainEvent } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleBusinessAppEchoEvent(echoMessage({ subtype }));
+
+    expect(result).toEqual({ duplicate: false, ignored: true, observationsRecorded: false });
+    expect(store.entries.size).toBe(0);
+    expect(recordDomainEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -14,6 +14,7 @@ function fakeGateway(overrides: Partial<WhatsAppGateway> = {}): WhatsAppGateway 
   return {
     handleInboundMessage: vi.fn(async () => ({ duplicate: false, analysisTriggered: true, observationsRecorded: true })),
     handleStatusEvent: vi.fn(async () => ({ applied: true })),
+    handleBusinessAppEchoEvent: vi.fn(async () => ({ duplicate: false, observationsRecorded: true })),
     enqueueOutboundMessage: vi.fn(async () => ({ id: "pending-1" })),
     ...overrides,
   };
@@ -165,5 +166,106 @@ describe("handleWebhookEvent — 2. parsing, 3. normalization dispatch, never tr
     expect(summary.errors).toHaveLength(1);
     expect(summary.messagesProcessed).toBe(1);
     expect(gateway.handleInboundMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("regression: a payload with no smb_message_echoes key processes identically to before this field existed", async () => {
+    const gateway = fakeGateway();
+    const body = JSON.stringify(textMessagePayload());
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary).toEqual({
+      messagesProcessed: 1,
+      statusesProcessed: 0,
+      duplicatesSkipped: 0,
+      echoesProcessed: 0,
+      echoesIgnored: 0,
+      errors: [],
+    });
+    expect(gateway.handleBusinessAppEchoEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleWebhookEvent — Coexistence smb_message_echoes", () => {
+  function echoPayload(overrides: Record<string, unknown> = {}) {
+    return textMessagePayload({
+      messages: undefined,
+      contacts: undefined,
+      smb_message_echoes: [
+        { id: "wamid.ECHO1", to: "16315551234", timestamp: "1700000000", type: "text", text: { body: "On my way" } },
+      ],
+      ...overrides,
+    });
+  }
+
+  it("normalizes and dispatches a business-app echo to the gateway", async () => {
+    const gateway = fakeGateway();
+    const body = JSON.stringify(echoPayload());
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.echoesProcessed).toBe(1);
+    expect(summary.errors).toHaveLength(0);
+    expect(gateway.handleBusinessAppEchoEvent).toHaveBeenCalledTimes(1);
+    const [normalized] = (gateway.handleBusinessAppEchoEvent as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(normalized.externalId).toBe("wamid.ECHO1");
+    expect(normalized.toPhoneNumber).toBe("16315551234");
+    expect(normalized.subtype).toBe("NEW");
+  });
+
+  it("counts a duplicate echo result the same way a duplicate message is counted", async () => {
+    const gateway = fakeGateway({ handleBusinessAppEchoEvent: vi.fn(async () => ({ duplicate: true, observationsRecorded: false })) });
+    const body = JSON.stringify(echoPayload());
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.echoesProcessed).toBe(0);
+    expect(summary.duplicatesSkipped).toBe(1);
+  });
+
+  it("counts an ignored (edit/revoke) echo result separately", async () => {
+    const gateway = fakeGateway({ handleBusinessAppEchoEvent: vi.fn(async () => ({ duplicate: false, ignored: true, observationsRecorded: false })) });
+    const body = JSON.stringify(echoPayload({ smb_message_echoes: [{ id: "wamid.ECHO1", timestamp: "1700000000", type: "revoke" }] }));
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.echoesIgnored).toBe(1);
+    expect(summary.echoesProcessed).toBe(0);
+    expect(summary.duplicatesSkipped).toBe(0);
+  });
+
+  it("processes messages, statuses, and echoes independently within one batch", async () => {
+    const gateway = fakeGateway();
+    const body = JSON.stringify(
+      textMessagePayload({
+        messages: [{ id: "wamid.IN1", from: "16315551234", timestamp: "1700000000", type: "text", text: { body: "Hola" } }],
+        statuses: [{ id: "wamid.OUT1", status: "delivered", timestamp: "1700000000", recipient_id: "16315551234" }],
+        smb_message_echoes: [{ id: "wamid.ECHO1", to: "16315551234", timestamp: "1700000000", type: "text", text: { body: "On my way" } }],
+      }),
+    );
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.messagesProcessed).toBe(1);
+    expect(summary.statusesProcessed).toBe(1);
+    expect(summary.echoesProcessed).toBe(1);
+    expect(summary.errors).toHaveLength(0);
+  });
+
+  it("continues processing the rest of the batch when one echo item fails to normalize", async () => {
+    const gateway = fakeGateway();
+    const body = JSON.stringify(
+      echoPayload({
+        smb_message_echoes: [
+          { id: "wamid.ECHO1", timestamp: "1700000000", type: "text", text: { body: "missing recipient" } },
+          { id: "wamid.ECHO2", to: "16315551234", timestamp: "1700000001", type: "text", text: { body: "has recipient" } },
+        ],
+      }),
+    );
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.echoesProcessed).toBe(1);
   });
 });

@@ -213,4 +213,49 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
     const events = await db!.whatsAppMessageStatusEvent.findMany({ where: { pendingMessageId: pending.id } });
     expect(events.map((e) => e.status)).toContain("DELIVERED");
   });
+
+  it("Coexistence: a business-app echo round-trips into a real OUTBOUND ConversationEntry", async () => {
+    const gateway = createWhatsAppGateway({ runAnalysis: makeRunAnalysis(db!) }, db!);
+
+    const result = await gateway.handleBusinessAppEchoEvent({
+      externalId: `wamid.ECHO-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      toPhoneNumber: "16315559999",
+      subtype: "NEW",
+      messageType: "TEXT",
+      content: "En camino con el kit.",
+      occurredAt: new Date(),
+      raw: {},
+    });
+
+    expect(result.duplicate).toBe(false);
+    expect(result.businessId).toBe(fixture.businessId);
+
+    const entry = await db!.conversationEntry.findUnique({ where: { id: result.entryId! } });
+    expect(entry?.direction).toBe("OUTBOUND");
+    expect(entry?.content).toBe("En camino con el kit.");
+  });
+
+  it("Coexistence: a redelivered echo is a no-op against the real unique constraint", async () => {
+    const gateway = createWhatsAppGateway({ runAnalysis: makeRunAnalysis(db!) }, db!);
+    const echo = {
+      externalId: `wamid.ECHODUP-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      toPhoneNumber: "16315558888",
+      subtype: "NEW" as const,
+      messageType: "TEXT" as const,
+      content: "Hola",
+      occurredAt: new Date(),
+      raw: {},
+    };
+
+    const first = await gateway.handleBusinessAppEchoEvent(echo);
+    const second = await gateway.handleBusinessAppEchoEvent(echo);
+
+    expect(first.duplicate).toBe(false);
+    expect(second.duplicate).toBe(true);
+
+    const entries = await db!.conversationEntry.findMany({ where: { externalId: echo.externalId } });
+    expect(entries).toHaveLength(1);
+  });
 });
