@@ -54,20 +54,26 @@ const rawMessageEchoSchema = z
   })
   .passthrough();
 
-const webhookValueSchema = z.object({
+// Only the fields every "messages"-field value has in common, regardless of
+// which of contacts/messages/statuses/smb_message_echoes it happens to
+// carry — phoneNumberId is the one thing every item in the loop below
+// needs. The arrays themselves are deliberately NOT validated here: doing
+// so would make one bad status or message (an unrecognized enum value, a
+// field Meta added since this schema was written, ...) invalidate the
+// whole value and silently drop every *other*, perfectly valid item riding
+// alongside it in the same batch. Each array is instead read as unknown[]
+// and its items are validated one at a time in the processing loop, so a
+// bad item only ever costs itself.
+const webhookValueMetaSchema = z.object({
   messaging_product: z.literal("whatsapp"),
   metadata: z.object({
     display_phone_number: z.string(),
     phone_number_id: z.string().min(1),
   }),
-  contacts: z.array(rawContactSchema).optional(),
-  messages: z.array(rawMessageSchema).optional(),
-  statuses: z.array(rawStatusSchema).optional(),
-  smb_message_echoes: z.array(rawMessageEchoSchema).optional(),
 });
 
 // `value`'s shape depends on `field`. Only "messages" (inbound messages and
-// status updates) uses webhookValueSchema — a WABA subscribed to other
+// status updates) uses webhookValueMetaSchema — a WABA subscribed to other
 // fields (message_template_status_update, phone_number_name_update,
 // account_update, security, ...) gets those delivered to this same
 // endpoint with a completely different value shape. Validating `value`
@@ -150,8 +156,8 @@ export async function handleWebhookEvent(
 
   for (const entry of parsed.data.entry) {
     for (const change of entry.changes) {
-      const valueParse = webhookValueSchema.safeParse(change.value);
-      if (!valueParse.success) {
+      const metaParse = webhookValueMetaSchema.safeParse(change.value);
+      if (!metaParse.success) {
         // Only "messages" changes are supposed to have this shape. Any other
         // field (template status updates, phone number updates, account
         // alerts, ...) legitimately looks nothing like it — that's not a
@@ -159,7 +165,7 @@ export async function handleWebhookEvent(
         if (change.field === "messages") {
           const error = new InvalidWebhookPayloadError(
             `Webhook change with field "messages" does not match the expected shape.`,
-            valueParse.error.issues,
+            metaParse.error.issues,
           );
           console.error("[whatsapp webhook] malformed messages change, skipping:", { field: change.field, error, stack: error.stack });
           summary.errors.push(error);
@@ -167,15 +173,29 @@ export async function handleWebhookEvent(
         continue;
       }
 
-      const value = valueParse.data;
-      const phoneNumberId = value.metadata.phone_number_id;
+      const phoneNumberId = metaParse.data.metadata.phone_number_id;
+      // `change.value` only had messaging_product/metadata validated above —
+      // the arrays below are read as unknown[] and each item is validated
+      // (and processed) independently, so one bad item can never take its
+      // valid siblings down with it.
+      const rawValue = change.value as Record<string, unknown>;
 
-      for (const rawMessage of value.messages ?? []) {
+      const contacts: WhatsAppRawContact[] = [];
+      for (const rawContact of asArray(rawValue.contacts)) {
+        const contactParse = rawContactSchema.safeParse(rawContact);
+        if (contactParse.success) contacts.push(contactParse.data);
+      }
+
+      for (const rawMessageUnknown of asArray(rawValue.messages)) {
+        const messageParse = rawMessageSchema.safeParse(rawMessageUnknown);
+        if (!messageParse.success) {
+          const error = new InvalidWebhookPayloadError("Webhook message item does not match the expected shape.", messageParse.error.issues);
+          console.error("[whatsapp webhook] malformed message item, skipping item:", { item: rawMessageUnknown, error, stack: error.stack });
+          summary.errors.push(error);
+          continue;
+        }
         try {
-          const normalized = normalizeInboundMessage(rawMessage as WhatsAppRawMessage, {
-            phoneNumberId,
-            contacts: value.contacts as WhatsAppRawContact[] | undefined,
-          });
+          const normalized = normalizeInboundMessage(messageParse.data as WhatsAppRawMessage, { phoneNumberId, contacts });
           const result = await dependencies.gateway.handleInboundMessage(normalized);
           if (result.duplicate) {
             summary.duplicatesSkipped += 1;
@@ -184,7 +204,7 @@ export async function handleWebhookEvent(
           }
         } catch (error) {
           console.error("[whatsapp webhook] failed to process inbound message, skipping item:", {
-            item: rawMessage,
+            item: messageParse.data,
             error,
             stack: error instanceof Error ? error.stack : undefined,
           });
@@ -192,14 +212,21 @@ export async function handleWebhookEvent(
         }
       }
 
-      for (const rawStatus of value.statuses ?? []) {
+      for (const rawStatusUnknown of asArray(rawValue.statuses)) {
+        const statusParse = rawStatusSchema.safeParse(rawStatusUnknown);
+        if (!statusParse.success) {
+          const error = new InvalidWebhookPayloadError("Webhook status item does not match the expected shape.", statusParse.error.issues);
+          console.error("[whatsapp webhook] malformed status item, skipping item:", { item: rawStatusUnknown, error, stack: error.stack });
+          summary.errors.push(error);
+          continue;
+        }
         try {
-          const normalized = normalizeStatusEvent(rawStatus as WhatsAppRawStatus, phoneNumberId);
+          const normalized = normalizeStatusEvent(statusParse.data as WhatsAppRawStatus, phoneNumberId);
           await dependencies.gateway.handleStatusEvent(normalized);
           summary.statusesProcessed += 1;
         } catch (error) {
           console.error("[whatsapp webhook] failed to process status update, skipping item:", {
-            item: rawStatus,
+            item: statusParse.data,
             error,
             stack: error instanceof Error ? error.stack : undefined,
           });
@@ -210,9 +237,16 @@ export async function handleWebhookEvent(
       // Coexistence only — absent entirely for numbers not onboarded via
       // Embedded Signup's business-app flow, so this loop is a no-op for
       // every payload shape that existed before this field was added.
-      for (const rawEcho of value.smb_message_echoes ?? []) {
+      for (const rawEchoUnknown of asArray(rawValue.smb_message_echoes)) {
+        const echoParse = rawMessageEchoSchema.safeParse(rawEchoUnknown);
+        if (!echoParse.success) {
+          const error = new InvalidWebhookPayloadError("Webhook echo item does not match the expected shape.", echoParse.error.issues);
+          console.error("[whatsapp webhook] malformed echo item, skipping item:", { item: rawEchoUnknown, error, stack: error.stack });
+          summary.errors.push(error);
+          continue;
+        }
         try {
-          const normalized = normalizeBusinessAppEchoMessage(rawEcho as WhatsAppRawMessageEcho, { phoneNumberId });
+          const normalized = normalizeBusinessAppEchoMessage(echoParse.data as WhatsAppRawMessageEcho, { phoneNumberId });
           const result = await dependencies.gateway.handleBusinessAppEchoEvent(normalized);
           if (result.duplicate) {
             summary.duplicatesSkipped += 1;
@@ -223,7 +257,7 @@ export async function handleWebhookEvent(
           }
         } catch (error) {
           console.error("[whatsapp webhook] failed to process business-app echo, skipping item:", {
-            item: rawEcho,
+            item: echoParse.data,
             error,
             stack: error instanceof Error ? error.stack : undefined,
           });
@@ -234,4 +268,8 @@ export async function handleWebhookEvent(
   }
 
   return summary;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }

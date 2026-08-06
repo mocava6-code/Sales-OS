@@ -192,6 +192,21 @@ describe("handleWebhookEvent — 2. parsing, 3. normalization dispatch, never tr
     expect(normalized.status).toBe("DELIVERED");
   });
 
+  it("processes a valid message even when a sibling status in the same value has an unrecognized status value", async () => {
+    const gateway = fakeGateway();
+    const body = JSON.stringify(
+      textMessagePayload({
+        statuses: [{ id: "wamid.OUT1", status: "warning", timestamp: "1700000000", recipient_id: "16315551234" }],
+      }),
+    );
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.messagesProcessed).toBe(1);
+    expect(gateway.handleInboundMessage).toHaveBeenCalledTimes(1);
+    expect(summary.errors).toHaveLength(1);
+  });
+
   it("continues processing the rest of the batch when one item's gateway call throws", async () => {
     let call = 0;
     const gateway = fakeGateway({
