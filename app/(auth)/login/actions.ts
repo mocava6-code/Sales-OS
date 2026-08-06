@@ -14,15 +14,26 @@ export async function requestMagicLink(
     return { message: "Enter a valid email address." };
   }
 
+  console.log("[login/requestMagicLink] server action invoked");
+
   const supabase = await createClient();
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const emailRedirectTo = `${siteUrl}/auth/callback`;
 
-  await supabase.auth.signInWithOtp({
+  console.log(`[login/requestMagicLink] emailRedirectTo=${emailRedirectTo}`);
+
+  const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: `${siteUrl}/auth/callback`,
+      emailRedirectTo,
     },
   });
+
+  if (error) {
+    console.log(`[login/requestMagicLink] signInWithOtp error code=${error.code ?? "unknown"} message=${error.message}`);
+  } else {
+    console.log("[login/requestMagicLink] signInWithOtp succeeded");
+  }
 
   // Deliberately generic: Supabase's own auth.users table doesn't know about
   // our seeded User table, so this response can't confirm or deny whether
