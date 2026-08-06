@@ -66,9 +66,17 @@ const webhookValueSchema = z.object({
   smb_message_echoes: z.array(rawMessageEchoSchema).optional(),
 });
 
+// `value`'s shape depends on `field`. Only "messages" (inbound messages and
+// status updates) uses webhookValueSchema — a WABA subscribed to other
+// fields (message_template_status_update, phone_number_name_update,
+// account_update, security, ...) gets those delivered to this same
+// endpoint with a completely different value shape. Validating `value`
+// eagerly here would reject the whole request for a change type this
+// webhook was never meant to read. It's parsed per-change instead, inside
+// the processing loop below, once we know what `field` actually is.
 const webhookChangeSchema = z.object({
   field: z.string(),
-  value: webhookValueSchema,
+  value: z.unknown(),
 });
 
 const webhookEntrySchema = z.object({
@@ -142,7 +150,24 @@ export async function handleWebhookEvent(
 
   for (const entry of parsed.data.entry) {
     for (const change of entry.changes) {
-      const { value } = change;
+      const valueParse = webhookValueSchema.safeParse(change.value);
+      if (!valueParse.success) {
+        // Only "messages" changes are supposed to have this shape. Any other
+        // field (template status updates, phone number updates, account
+        // alerts, ...) legitimately looks nothing like it — that's not a
+        // processing failure, just a change type this webhook doesn't read.
+        if (change.field === "messages") {
+          const error = new InvalidWebhookPayloadError(
+            `Webhook change with field "messages" does not match the expected shape.`,
+            valueParse.error.issues,
+          );
+          console.error("[whatsapp webhook] malformed messages change, skipping:", { field: change.field, error, stack: error.stack });
+          summary.errors.push(error);
+        }
+        continue;
+      }
+
+      const value = valueParse.data;
       const phoneNumberId = value.metadata.phone_number_id;
 
       for (const rawMessage of value.messages ?? []) {
@@ -158,6 +183,11 @@ export async function handleWebhookEvent(
             summary.messagesProcessed += 1;
           }
         } catch (error) {
+          console.error("[whatsapp webhook] failed to process inbound message, skipping item:", {
+            item: rawMessage,
+            error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
           summary.errors.push(error);
         }
       }
@@ -168,6 +198,11 @@ export async function handleWebhookEvent(
           await dependencies.gateway.handleStatusEvent(normalized);
           summary.statusesProcessed += 1;
         } catch (error) {
+          console.error("[whatsapp webhook] failed to process status update, skipping item:", {
+            item: rawStatus,
+            error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
           summary.errors.push(error);
         }
       }
@@ -187,6 +222,11 @@ export async function handleWebhookEvent(
             summary.echoesProcessed += 1;
           }
         } catch (error) {
+          console.error("[whatsapp webhook] failed to process business-app echo, skipping item:", {
+            item: rawEcho,
+            error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
           summary.errors.push(error);
         }
       }

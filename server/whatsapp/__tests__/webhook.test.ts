@@ -100,6 +100,55 @@ describe("handleWebhookEvent — 2. parsing, 3. normalization dispatch, never tr
     );
   });
 
+  it("does not reject a webhook batch containing a change for a field this webhook doesn't process", async () => {
+    // A WABA subscribed to more than the "messages" field (e.g. template
+    // status updates) gets those delivered to this same endpoint. Their
+    // `value` looks nothing like a messages value — that must not fail the
+    // whole request.
+    const gateway = fakeGateway();
+    const templateStatusPayload = {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba-1",
+          changes: [
+            {
+              field: "message_template_status_update",
+              value: {
+                event: "APPROVED",
+                message_template_id: 954500552305159,
+                message_template_name: "welcome",
+                message_template_language: "en_US",
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const body = JSON.stringify(templateStatusPayload);
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.errors).toHaveLength(0);
+    expect(summary.messagesProcessed).toBe(0);
+    expect(gateway.handleInboundMessage).not.toHaveBeenCalled();
+  });
+
+  it("processes a messages change alongside an unrelated change in the same batch", async () => {
+    const gateway = fakeGateway();
+    const payload = textMessagePayload();
+    payload.entry[0].changes.push({
+      field: "phone_number_name_update",
+      value: { decision: "APPROVED", requested_verified_name: "Acme Inc" },
+    } as unknown as (typeof payload.entry)[0]["changes"][0]);
+    const body = JSON.stringify(payload);
+
+    const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
+
+    expect(summary.messagesProcessed).toBe(1);
+    expect(summary.errors).toHaveLength(0);
+  });
+
   it("normalizes and dispatches a valid text message to the gateway", async () => {
     const gateway = fakeGateway();
     const body = JSON.stringify(textMessagePayload());
