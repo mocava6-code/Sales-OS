@@ -2,13 +2,29 @@ import { describe, expect, it } from "vitest";
 import {
   approveWhatsAppReplyHandler,
   queueWhatsAppReplyHandler,
+  registerWhatsAppPhoneNumberHandler,
   rejectWhatsAppReplyHandler,
   sendQueuedReplyHandler,
 } from "../whatsapp-actions";
 import { NotFoundError } from "../errors";
+import { DuplicatePhoneNumberError } from "@/server/whatsapp/errors";
 import { createFakeAuthContextResolver } from "../testing/fake-auth";
 
 const advisor = { id: "user-1", businessId: "biz-1", role: "SALESPERSON" as const };
+const owner = { id: "user-2", businessId: "biz-1", role: "OWNER" as const };
+
+function phoneNumberRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "wpn-1",
+    businessId: "biz-1",
+    phoneNumberId: "843458045523703",
+    displayPhoneNumber: "+51 999 999 999",
+    wabaId: "860448446409411",
+    label: null,
+    createdAt: new Date(),
+    ...overrides,
+  } as never;
+}
 
 function pendingMessageRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -245,5 +261,103 @@ describe("sendQueuedReplyHandler", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("registerWhatsAppPhoneNumberHandler", () => {
+  it("returns UNAUTHENTICATED without registering when there's no session", async () => {
+    let called = false;
+    const result = await registerWhatsAppPhoneNumberHandler(
+      { phoneNumberId: "843458045523703", displayPhoneNumber: "+51 999 999 999", wabaId: "860448446409411" },
+      {
+        resolver: createFakeAuthContextResolver(null),
+        register: async () => {
+          called = true;
+          throw new Error("should never be called");
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("UNAUTHENTICATED");
+    expect(called).toBe(false);
+  });
+
+  it("returns FORBIDDEN for a non-OWNER, without registering", async () => {
+    let called = false;
+    const result = await registerWhatsAppPhoneNumberHandler(
+      { phoneNumberId: "843458045523703", displayPhoneNumber: "+51 999 999 999", wabaId: "860448446409411" },
+      {
+        resolver: createFakeAuthContextResolver(advisor),
+        register: async () => {
+          called = true;
+          throw new Error("should never be called");
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("FORBIDDEN");
+    expect(called).toBe(false);
+  });
+
+  it("rejects a non-numeric phoneNumberId before registering", async () => {
+    let called = false;
+    const result = await registerWhatsAppPhoneNumberHandler(
+      { phoneNumberId: "not-a-number", displayPhoneNumber: "+51 999 999 999", wabaId: "860448446409411" },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        register: async () => {
+          called = true;
+          throw new Error("should never be called");
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+    expect(called).toBe(false);
+  });
+
+  it("registers the number scoped to the owner's business", async () => {
+    let capturedBusinessId: string | undefined;
+    let capturedInput: unknown;
+    const result = await registerWhatsAppPhoneNumberHandler(
+      { phoneNumberId: "843458045523703", displayPhoneNumber: "+51 999 999 999", wabaId: "860448446409411", label: "Main line" },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        register: async (businessId, input) => {
+          capturedBusinessId = businessId;
+          capturedInput = input;
+          return phoneNumberRow({ label: input.label ?? null });
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.phoneNumberId).toBe("843458045523703");
+      expect(result.data.label).toBe("Main line");
+    }
+    expect(capturedBusinessId).toBe("biz-1");
+    expect(capturedInput).toMatchObject({ phoneNumberId: "843458045523703", wabaId: "860448446409411" });
+  });
+
+  it("maps a duplicate phoneNumberId to an INVALID_INPUT field error", async () => {
+    const result = await registerWhatsAppPhoneNumberHandler(
+      { phoneNumberId: "843458045523703", displayPhoneNumber: "+51 999 999 999", wabaId: "860448446409411" },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        register: async () => {
+          throw new DuplicatePhoneNumberError("843458045523703");
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_INPUT");
+      expect(result.error.fieldErrors?.phoneNumberId?.[0]).toContain("843458045523703");
+    }
   });
 });

@@ -13,10 +13,13 @@
 import {
   approveWhatsAppReplySchema,
   queueWhatsAppReplySchema,
+  registerWhatsAppPhoneNumberSchema,
   rejectWhatsAppReplySchema,
   sendQueuedReplySchema,
 } from "@/lib/validations/whatsapp";
-import type { PendingWhatsAppMessage as PendingWhatsAppMessageRow } from "@/server/db/generated/client";
+import type { PendingWhatsAppMessage as PendingWhatsAppMessageRow, WhatsAppPhoneNumber as WhatsAppPhoneNumberRow } from "@/server/db/generated/client";
+import { DuplicatePhoneNumberError } from "@/server/whatsapp/errors";
+import { registerWhatsAppPhoneNumber, type RegisterWhatsAppPhoneNumberInput } from "@/server/whatsapp/phone-numbers";
 import {
   enqueuePendingMessage,
   markMessageCancelled,
@@ -32,8 +35,8 @@ import {
   loadAuthorizedPendingMessage,
 } from "./access-control";
 import { type AuthContextResolver, type AuthenticatedUser, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
-import { toPendingWhatsAppMessageSummaryDTO, type PendingWhatsAppMessageSummaryDTO } from "./dto";
-import { type ApplicationResult, InvalidInputError, toApplicationResult } from "./errors";
+import { toPendingWhatsAppMessageSummaryDTO, toWhatsAppPhoneNumberDTO, type PendingWhatsAppMessageSummaryDTO, type WhatsAppPhoneNumberDTO } from "./dto";
+import { type ApplicationResult, ForbiddenError, InvalidInputError, toApplicationResult } from "./errors";
 
 function parseOrThrow<Schema extends z.ZodTypeAny>(schema: Schema, rawInput: unknown): z.infer<Schema> {
   const parsed = schema.safeParse(rawInput);
@@ -157,5 +160,50 @@ export function sendQueuedReplyHandler(
     const message = await sendReady(input.pendingMessageId, { client: senderClient });
 
     return toPendingWhatsAppMessageSummaryDTO(message);
+  });
+}
+
+// --- Register phone number ------------------------------------------------
+
+/**
+ * Registering a business's WhatsApp number is OWNER-only — same access
+ * level as Knowledge ingestion (server/application/knowledge-actions.ts's
+ * assertKnowledgeIngestionAccess): a tenant-wide routing config that
+ * determines which business every future inbound message resolves to, not
+ * a per-conversation action any SALESPERSON should be able to change.
+ */
+function assertPhoneNumberManagementAccess(user: AuthenticatedUser): void {
+  if (user.role !== "OWNER") {
+    throw new ForbiddenError("Only the business owner can register a WhatsApp number.");
+  }
+}
+
+export interface RegisterPhoneNumberActionDependencies extends ActionDependencies {
+  register?: (businessId: string, input: RegisterWhatsAppPhoneNumberInput) => Promise<WhatsAppPhoneNumberRow>;
+}
+
+export function registerWhatsAppPhoneNumberHandler(
+  rawInput: unknown,
+  dependencies: RegisterPhoneNumberActionDependencies = {},
+): Promise<ApplicationResult<WhatsAppPhoneNumberDTO>> {
+  return toApplicationResult(async () => {
+    const user = await requireAuthenticatedUser(dependencies.resolver ?? defaultAuthContextResolver);
+    assertPhoneNumberManagementAccess(user);
+    const input = parseOrThrow(registerWhatsAppPhoneNumberSchema, rawInput);
+
+    const register = dependencies.register ?? registerWhatsAppPhoneNumber;
+
+    try {
+      const record = await register(user.businessId, input);
+      return toWhatsAppPhoneNumberDTO(record);
+    } catch (error) {
+      // Surfaced as a field error rather than a generic failure — the
+      // duplicate is almost always the same number pasted twice, or a
+      // number already registered to this or another business.
+      if (error instanceof DuplicatePhoneNumberError) {
+        throw new InvalidInputError({ phoneNumberId: [error.message] });
+      }
+      throw error;
+    }
   });
 }

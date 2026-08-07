@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { verifySession } from "@/lib/auth/dal";
 import { signOutAction } from "@/lib/auth/actions";
 import { Card } from "@/components/ui/Card";
@@ -14,6 +15,15 @@ export default async function SettingsPage() {
         <p className="text-sm text-neutral-500">{user.email}</p>
         <p className="mt-1 text-xs uppercase tracking-wide text-neutral-400">{user.role}</p>
       </Card>
+
+      {user.role === "OWNER" && (
+        <Link href="/settings/whatsapp" className="block">
+          <Card className="flex items-center justify-between">
+            <p className="font-medium text-neutral-900">WhatsApp numbers</p>
+            <span className="text-neutral-400">→</span>
+          </Card>
+        </Link>
+      )}
 
       <form action={signOutAction}>
         <button

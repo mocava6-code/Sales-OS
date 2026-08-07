@@ -8,9 +8,14 @@
 import {
   approveWhatsAppReplyHandler,
   queueWhatsAppReplyHandler,
+  registerWhatsAppPhoneNumberHandler,
   rejectWhatsAppReplyHandler,
   sendQueuedReplyHandler,
 } from "@/server/application/whatsapp-actions";
+
+export async function registerWhatsAppPhoneNumberAction(rawInput: unknown) {
+  return registerWhatsAppPhoneNumberHandler(rawInput);
+}
 
 export async function queueWhatsAppReplyAction(rawInput: unknown) {
   return queueWhatsAppReplyHandler(rawInput);

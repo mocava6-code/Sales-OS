@@ -17,7 +17,7 @@ import type {
 import type { Evidence, EngineWarning, MissingFieldEntry } from "@/server/intelligence/types";
 import type { AnalyzeConversationAndCreateDecisionsResult } from "@/server/orchestration/types";
 import type { OutcomeAttribution, OutcomeRecord, OutcomeType, SavedDecisionRecord } from "@/server/persistence/types";
-import type { PendingWhatsAppMessage as PendingWhatsAppMessageRow } from "@/server/db/generated/client";
+import type { PendingWhatsAppMessage as PendingWhatsAppMessageRow, WhatsAppPhoneNumber as WhatsAppPhoneNumberRow } from "@/server/db/generated/client";
 import type { AuthorizedConversationForObserverConsole } from "./access-control";
 import type { ConversationTimelineDTO, DomainEventTimelineEntryDTO } from "@/server/observer-console/types";
 
@@ -147,6 +147,26 @@ export function toPendingWhatsAppMessageSummaryDTO(row: PendingWhatsAppMessageRo
     failureReason: row.failureReason,
     createdAt: row.createdAt,
     sentAt: row.sentAt,
+  };
+}
+
+export interface WhatsAppPhoneNumberDTO {
+  id: string;
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  wabaId: string;
+  label: string | null;
+  createdAt: Date;
+}
+
+export function toWhatsAppPhoneNumberDTO(row: WhatsAppPhoneNumberRow): WhatsAppPhoneNumberDTO {
+  return {
+    id: row.id,
+    phoneNumberId: row.phoneNumberId,
+    displayPhoneNumber: row.displayPhoneNumber,
+    wabaId: row.wabaId,
+    label: row.label,
+    createdAt: row.createdAt,
   };
 }
 

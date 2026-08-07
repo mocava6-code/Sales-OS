@@ -49,6 +49,15 @@ export class UnknownPhoneNumberError extends WhatsAppError {
   }
 }
 
+/** phoneNumberId already has a WhatsAppPhoneNumber row — the unique index is the actual source of truth, this is just its typed surface. */
+export class DuplicatePhoneNumberError extends WhatsAppError {
+  readonly code = "DUPLICATE_PHONE_NUMBER";
+
+  constructor(public readonly phoneNumberId: string) {
+    super(`A WhatsApp number with phone_number_id "${phoneNumberId}" is already registered.`);
+  }
+}
+
 export class PendingMessageNotFoundError extends WhatsAppError {
   readonly code = "PENDING_MESSAGE_NOT_FOUND";
 
