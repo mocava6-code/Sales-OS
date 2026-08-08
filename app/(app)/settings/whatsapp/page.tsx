@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { verifySession } from "@/lib/auth/dal";
 import { Card } from "@/components/ui/Card";
 import { WhatsAppPhoneNumberPanel } from "@/components/settings/WhatsAppPhoneNumberPanel";
@@ -27,6 +28,16 @@ export default async function WhatsAppSettingsPage() {
       </p>
 
       <WhatsAppPhoneNumberPanel />
+
+      <Link href="/settings/whatsapp/import" className="block">
+        <Card className="flex items-center justify-between">
+          <div>
+            <p className="font-medium text-neutral-900">Import chat history</p>
+            <p className="text-sm text-neutral-500">Backfill Leads and Conversations from an exported WhatsApp chat</p>
+          </div>
+          <span className="text-neutral-400">→</span>
+        </Card>
+      </Link>
 
       <div className="space-y-2">
         {numbers.length === 0 && <Card className="text-sm text-neutral-500">No WhatsApp numbers registered yet.</Card>}
