@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   approveWhatsAppReplyHandler,
+  importHistoricalWhatsAppChatHandler,
+  previewHistoricalImportHandler,
   queueWhatsAppReplyHandler,
   registerWhatsAppPhoneNumberHandler,
   rejectWhatsAppReplyHandler,
@@ -12,6 +14,32 @@ import { createFakeAuthContextResolver } from "../testing/fake-auth";
 
 const advisor = { id: "user-1", businessId: "biz-1", role: "SALESPERSON" as const };
 const owner = { id: "user-2", businessId: "biz-1", role: "OWNER" as const };
+
+function fakeDb(businessNames: string[] = ["Koriaki"]) {
+  return { user: { findMany: async () => businessNames.map((name) => ({ name })) } } as never;
+}
+
+const TWO_PARTICIPANT_CHAT = [
+  "27/07/26, 14:05 - Juan Pérez: Hola, quisiera saber el precio",
+  "27/07/26, 14:07 - Koriaki: ¡Hola! Claro, ¿qué producto te interesa?",
+  "27/07/26, 14:08 - Juan Pérez: El modelo azul",
+].join("\n");
+
+const AMBIGUOUS_TWO_PARTICIPANT_CHAT = [
+  "27/07/26, 14:05 - Juan Pérez: Hola",
+  "27/07/26, 14:07 - María López: ¡Hola!",
+].join("\n");
+
+const GROUP_CHAT = [
+  "27/07/26, 14:05 - Juan Pérez: Hola a todos",
+  "27/07/26, 14:07 - María López: Hola",
+  "27/07/26, 14:08 - Koriaki: Bienvenidos",
+].join("\n");
+
+const CHAT_WITH_BAD_TIMESTAMP = [
+  "27/07/26, 14:05 - Juan Pérez: Hola, quisiera saber el precio",
+  "40/13/26, 14:06 - Koriaki: mensaje con fecha inválida",
+].join("\n");
 
 function phoneNumberRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -358,6 +386,259 @@ describe("registerWhatsAppPhoneNumberHandler", () => {
     if (!result.ok) {
       expect(result.error.code).toBe("INVALID_INPUT");
       expect(result.error.fieldErrors?.phoneNumberId?.[0]).toContain("843458045523703");
+    }
+  });
+});
+
+describe("previewHistoricalImportHandler", () => {
+  it("returns UNAUTHENTICATED without touching the database when there's no session", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(null), db: fakeDb() },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("UNAUTHENTICATED");
+  });
+
+  it("returns FORBIDDEN for a non-OWNER", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(advisor), db: fakeDb() },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("FORBIDDEN");
+  });
+
+  it("resolves a 2-participant chat against a known business name and suggests a phone only when the customer label looks like one", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.data.status === "READY_TO_IMPORT") {
+      expect(result.data.messageCount).toBe(3);
+      expect(result.data.unparseableTimestampCount).toBe(0);
+      expect(result.data.suggestedCustomerPhone).toBeNull(); // "Juan Pérez" isn't phone-shaped
+    } else {
+      throw new Error("expected READY_TO_IMPORT");
+    }
+  });
+
+  it("suggests the customer phone when the unsaved-contact label is phone-shaped", async () => {
+    const chat = TWO_PARTICIPANT_CHAT.replace(/Juan Pérez/g, "+51 999 999 999");
+    const result = await previewHistoricalImportHandler(
+      { rawText: chat, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.data.status === "READY_TO_IMPORT") {
+      expect(result.data.suggestedCustomerPhone).toBe("+51 999 999 999");
+    } else {
+      throw new Error("expected READY_TO_IMPORT");
+    }
+  });
+
+  it("returns NEEDS_PARTICIPANT_RESOLUTION for an ambiguous 2-participant chat with no known-business match", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: AMBIGUOUS_TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Someone Else"]) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("NEEDS_PARTICIPANT_RESOLUTION");
+      if (result.data.status === "NEEDS_PARTICIPANT_RESOLUTION") {
+        expect(result.data.candidateLabels).toHaveLength(2);
+      }
+    }
+  });
+
+  it("resolves an ambiguous chat once manualBusinessSenderLabel is supplied", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: AMBIGUOUS_TWO_PARTICIPANT_CHAT, timezone: "America/Lima", manualBusinessSenderLabel: "María López" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Someone Else"]) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.status).toBe("READY_TO_IMPORT");
+  });
+
+  it("rejects a 3+ participant (group) chat as INVALID_INPUT", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: GROUP_CHAT, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+  });
+
+  it("counts unparseable timestamps without dropping the chat", async () => {
+    const result = await previewHistoricalImportHandler(
+      { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.data.status === "READY_TO_IMPORT") {
+      expect(result.data.unparseableTimestampCount).toBe(1);
+    } else {
+      throw new Error("expected READY_TO_IMPORT");
+    }
+  });
+});
+
+describe("importHistoricalWhatsAppChatHandler", () => {
+  const baseInput = { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima", phone: "+10000000005" };
+
+  it("returns UNAUTHENTICATED without calling findOrCreateLead when there's no session", async () => {
+    let called = false;
+    const result = await importHistoricalWhatsAppChatHandler(baseInput, {
+      resolver: createFakeAuthContextResolver(null),
+      db: fakeDb(),
+      findOrCreateLead: async () => {
+        called = true;
+        throw new Error("should never be called");
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("UNAUTHENTICATED");
+    expect(called).toBe(false);
+  });
+
+  it("returns FORBIDDEN for a non-OWNER, without calling findOrCreateLead", async () => {
+    let called = false;
+    const result = await importHistoricalWhatsAppChatHandler(baseInput, {
+      resolver: createFakeAuthContextResolver(advisor),
+      db: fakeDb(),
+      findOrCreateLead: async () => {
+        called = true;
+        throw new Error("should never be called");
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("FORBIDDEN");
+    expect(called).toBe(false);
+  });
+
+  it("rejects a group/unresolved chat as INVALID_INPUT without calling findOrCreateLead or importEntries", async () => {
+    let leadCalled = false;
+    let importCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { rawText: GROUP_CHAT, timezone: "America/Lima", phone: "+10000000005" },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => {
+          leadCalled = true;
+          return { id: "lead-1" };
+        },
+        importEntries: async () => {
+          importCalled = true;
+          return { conversationId: "conv-1", conversationCreated: true, createdCount: 0, duplicateCount: 0 };
+        },
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+    expect(leadCalled).toBe(false);
+    expect(importCalled).toBe(false);
+  });
+
+  it("imports a resolved chat, filtering out the unparseable-timestamp message before it reaches importEntries", async () => {
+    let capturedEntries: unknown;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima", phone: "+10000000005" },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async (_businessId, _leadId, entries) => {
+          capturedEntries = entries;
+          return { conversationId: "conv-1", conversationCreated: true, createdCount: entries.length, duplicateCount: 0 };
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.leadId).toBe("lead-1");
+      expect(result.data.createdCount).toBe(1);
+      expect(result.data.skippedUnparseableTimestampCount).toBe(1);
+    }
+    expect(Array.isArray(capturedEntries)).toBe(true);
+    expect((capturedEntries as unknown[]).length).toBe(1);
+  });
+
+  it("never runs analysis when runAnalysis is false", async () => {
+    let analysisCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { ...baseInput, runAnalysis: false },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
+        runAnalysis: async () => {
+          analysisCalled = true;
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.analysisTriggered).toBe(false);
+    expect(analysisCalled).toBe(false);
+  });
+
+  it("skips analysis when the import was a full no-op (createdCount 0), even if runAnalysis is true", async () => {
+    let analysisCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { ...baseInput, runAnalysis: true },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async () => ({ conversationId: "conv-1", conversationCreated: false, createdCount: 0, duplicateCount: 3 }),
+        runAnalysis: async () => {
+          analysisCalled = true;
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.analysisTriggered).toBe(false);
+    expect(analysisCalled).toBe(false);
+  });
+
+  it("runs analysis once when runAnalysis is true and entries were actually created", async () => {
+    let analysisCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { ...baseInput, runAnalysis: true },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
+        runAnalysis: async () => {
+          analysisCalled = true;
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.analysisTriggered).toBe(true);
+    expect(analysisCalled).toBe(true);
+  });
+
+  it("marks the import successful (analysisTriggered: false) when analysis throws, without undoing the import", async () => {
+    const result = await importHistoricalWhatsAppChatHandler(
+      { ...baseInput, runAnalysis: true },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(["Koriaki"]),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
+        runAnalysis: async () => {
+          throw new Error("AI provider unavailable");
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.createdCount).toBe(3);
+      expect(result.data.analysisTriggered).toBe(false);
     }
   });
 });

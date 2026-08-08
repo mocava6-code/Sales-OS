@@ -41,6 +41,13 @@ enum ConversationSource {
   // pipeline (server/whatsapp/gateway.ts), never by a human. Anticipated by
   // name in ARCHITECTURE.md §4/§7 before this phase existed.
   WHATSAPP_SYNCED
+  // Historical WhatsApp CRM Import — set only when the import ITSELF
+  // creates the conversation (no prior WhatsApp thread existed for the
+  // lead). Never retroactively applied to a conversation that already had
+  // a source: source stays "how this thread first came to exist," not a
+  // live-updated status, even once a conversation has mixed
+  // live+backfilled entries (server/services/historical-import-service.ts).
+  HISTORICAL_IMPORT
 }
 
 enum ConversationStatus {
@@ -842,6 +849,22 @@ enum ExternalConversationSource {
   PASTED_TEXT
 }
 
+// Tracks whether an LLM semantic pass is worth running over this item,
+// independent of whether AI is currently configured (Sprint 8 zero-cost
+// mode) and independent of whether the deterministic layer already
+// produced KnowledgeCandidate rows for it — an item can have deterministic
+// candidates AND still be PENDING (deterministic rules are narrow; there
+// can be more in the same content than they catch). NOT_EVALUATED is the
+// creation-time default and is never treated as a terminal outcome — the
+// deterministic pass must resolve every item to NOT_NEEDED or PENDING;
+// COMPLETED is set only after an actual LLM pass has run.
+enum SemanticAnalysisStatus {
+  NOT_EVALUATED
+  NOT_NEEDED
+  PENDING
+  COMPLETED
+}
+
 // WhatsApp export date order is import-level configuration, never inferred
 // independently per message — see ImportedConversation.dateOrder.
 enum ImportDateOrder {
@@ -1015,6 +1038,13 @@ model ImportedConversation {
   parseWarnings Json?
   importedAt    DateTime @default(now())
 
+  // Zero-cost mode (Sprint 8 review) — set by the deterministic extraction
+  // pass to NOT_NEEDED or PENDING regardless of AI availability; only ever
+  // moves to COMPLETED after a real LLM pass. Tracked at conversation
+  // granularity, matching the extraction call-site granularity (one
+  // extraction pass per conversation, not per message).
+  semanticAnalysisStatus SemanticAnalysisStatus @default(NOT_EVALUATED)
+
   messages ImportedMessage[]
 
   @@index([businessId])
@@ -1070,6 +1100,12 @@ model WebsitePage {
   // Per-page queue state driving the bounded incremental batch runner.
   status        WebsitePageStatus  @default(DISCOVERED)
   httpStatus    Int?
+
+  // Zero-cost mode (Sprint 8 review) — independent of `status`: a page can
+  // be status=EXTRACTED (ingestion fully succeeded) while
+  // semanticAnalysisStatus stays PENDING forever until AI is configured and
+  // a real LLM pass runs. Never set based on AI availability alone.
+  semanticAnalysisStatus SemanticAnalysisStatus @default(NOT_EVALUATED)
 
   firstSeenAt   DateTime  @default(now())
   lastSeenAt    DateTime  @default(now())

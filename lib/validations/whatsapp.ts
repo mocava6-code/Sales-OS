@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { leadSchema } from "./lead";
 
 export const pendingMessageIdSchema = z.string().min(1, { error: "A message id is required." });
 export const conversationIdSchema = z.string().min(1, { error: "A conversation id is required." });
@@ -24,6 +25,30 @@ export const registerWhatsAppPhoneNumberSchema = z.object({
   label: z.string().trim().min(1).max(100).optional(),
 });
 
+// Mirrors the Prisma ImportDateOrder enum's values
+// (server/knowledge/whatsapp-import/timestamp.ts) — the historical import
+// flow reuses the same date-order ambiguity resolution as the Knowledge
+// WhatsApp importer, just for a different destination.
+export const historicalImportDateOrderSchema = z.enum(["DMY", "MDY"]);
+
+// Step 1: parse-only, no persistence — the initial submit and any
+// participant-resolution re-submit.
+export const previewHistoricalImportSchema = z.object({
+  rawText: z.string().trim().min(1, { error: "The conversation text can't be empty." }),
+  dateOrder: historicalImportDateOrderSchema.default("DMY"),
+  timezone: z.string().trim().min(1, { error: "A timezone is required." }),
+  manualBusinessSenderLabel: z.string().min(1).optional(),
+});
+
+// Step 2: the actual write — same shape plus the OWNER-confirmed customer
+// phone (reusing leadSchema's exact phone regex/normalization, so a phone
+// typed here always matches the same Lead a manual entry would) and the
+// optional post-import analysis opt-in.
+export const importHistoricalWhatsAppChatSchema = previewHistoricalImportSchema.extend({
+  phone: leadSchema.shape.phone,
+  runAnalysis: z.boolean().default(false),
+});
+
 export const queueWhatsAppReplySchema = z.object({
   conversationId: conversationIdSchema,
   body: z.string().trim().min(1, { error: "The reply can't be empty." }).max(4096),
@@ -43,6 +68,8 @@ export const sendQueuedReplySchema = z.object({
 });
 
 export type RegisterWhatsAppPhoneNumberInput = z.infer<typeof registerWhatsAppPhoneNumberSchema>;
+export type PreviewHistoricalImportActionInput = z.infer<typeof previewHistoricalImportSchema>;
+export type ImportHistoricalWhatsAppChatActionInput = z.infer<typeof importHistoricalWhatsAppChatSchema>;
 export type QueueWhatsAppReplyActionInput = z.infer<typeof queueWhatsAppReplySchema>;
 export type ApproveWhatsAppReplyActionInput = z.infer<typeof approveWhatsAppReplySchema>;
 export type RejectWhatsAppReplyActionInput = z.infer<typeof rejectWhatsAppReplySchema>;
