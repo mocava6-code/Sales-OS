@@ -93,6 +93,10 @@ export async function cleanupTestFixture(db: PrismaClient, fixture: TestFixture)
   await db.domainEvent.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.conversationEntry.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.conversation.delete({ where: { id: fixture.conversationId } });
+  // LeadCommercialProfile has no cascade delete off Lead (matches
+  // Conversation.lead/FollowUp.lead's existing no-cascade convention) —
+  // deleteMany is a safe no-op for fixtures that never created one.
+  await db.leadCommercialProfile.deleteMany({ where: { leadId: fixture.leadId } });
   await db.lead.delete({ where: { id: fixture.leadId } });
   await db.user.delete({ where: { id: fixture.userId } });
   await db.business.delete({ where: { id: fixture.businessId } });

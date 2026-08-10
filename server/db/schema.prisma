@@ -195,6 +195,34 @@ enum OutcomeAttribution {
   UNATTRIBUTED
 }
 
+// LeadCommercialProfile's persisted enum — deliberately NOT named CustomerType
+// to avoid colliding with server/intelligence/types.ts's identically-named TS
+// union type (RETAIL|WHOLESALE) if both are imported in the same file (e.g.
+// the projection service).
+enum CustomerTypeProfile {
+  RETAIL
+  WHOLESALE
+  // Tier 2 (InferenceSet.customerType) is the only source, and its TS
+  // CustomerType type is a strict RETAIL|WHOLESALE union — it can never
+  // actually emit UNKNOWN. Reserved for a future source/override; currently
+  // unreachable from any real code path.
+  UNKNOWN
+}
+
+// Deliberately NOT named NextActionType to avoid colliding with
+// server/intelligence/lead-commercial-state/types.ts's identically-named TS
+// type. Values mirror that TS type exactly — the ONLY LeadCommercialProfile
+// field sourced exclusively from the deterministic Lead Commercial State
+// engine (see server/services/lead-commercial-profile-service.ts).
+enum LeadNextAction {
+  ANSWER_QUESTION
+  CONFIRM_PAYMENT
+  SCHEDULE_DELIVERY
+  SEND_QUOTE
+  FOLLOW_UP
+  NONE
+}
+
 // ── Models ───────────────────────────────────────────────────────────────
 
 model Business {
@@ -278,8 +306,9 @@ model Lead {
   lastContactAt    DateTime?
   createdAt        DateTime     @default(now())
 
-  conversations Conversation[]
-  followUps     FollowUp[]
+  conversations     Conversation[]
+  followUps         FollowUp[]
+  commercialProfile LeadCommercialProfile?
 
   @@index([businessId])
   @@map("leads")
@@ -633,6 +662,47 @@ model ConversationAnalysisRun {
 
   @@unique([conversationId])
   @@map("conversation_analysis_runs")
+}
+
+// Canonical, indexed, per-Lead commercial profile — reconciles the two
+// fragmented commercial-fact sources (ConversationSnapshot's opaque Json
+// facts/inferences/objections, and the never-persisted LeadCommercialState)
+// via an explicit precedence algorithm — see
+// server/services/lead-commercial-profile-service.ts. NOT a new source of
+// truth: ConversationSnapshot and the deterministic engine remain
+// authoritative; this is a queryable index over them, safe to
+// recompute/re-derive at any time via the backfill script
+// (server/db/scripts/backfill-lead-commercial-profiles.ts).
+model LeadCommercialProfile {
+  id         String @id @default(uuid())
+  leadId     String @unique
+  lead       Lead   @relation(fields: [leadId], references: [id])
+  businessId String
+
+  vehicleBrand     String?
+  vehicleModel     String?
+  vehicleYear      Int?
+  productInterest  String?
+  customerType     CustomerTypeProfile?
+  nextAction       LeadNextAction?
+  nextActionReason String?
+  primaryObjection String?
+
+  // Per-field { source, confidence, snapshotId, updatedAt } — read back on
+  // every projection run to decide whether a new candidate may overwrite
+  // what's here. See LeadCommercialProfileProvenance in
+  // server/services/lead-commercial-profile-service.ts.
+  provenance Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, vehicleBrand])
+  @@index([businessId, vehicleModel])
+  @@index([businessId, productInterest])
+  @@index([businessId, customerType])
+  @@index([businessId, nextAction])
+  @@map("lead_commercial_profiles")
 }
 
 // ── WhatsApp Business Integration v1 ────────────────────────────────────
