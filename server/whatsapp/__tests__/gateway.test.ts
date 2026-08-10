@@ -31,6 +31,7 @@ function createFakeGatewayDeps(
     leadAssignments?: Record<string, string>; // phone -> advisorUserId
     runAnalysisImpl?: WhatsAppGatewayDependencies["runAnalysis"];
     recordDomainEventImpl?: WhatsAppGatewayDependencies["recordDomainEvent"];
+    projectCommercialProfileImpl?: WhatsAppGatewayDependencies["projectCommercialProfile"];
   } = {},
 ) {
   let idCounter = 0;
@@ -58,6 +59,9 @@ function createFakeGatewayDeps(
 
   const applyStatusUpdate = vi.fn(async () => ({ id: "event-1" }) as unknown);
   const enqueueMessage = vi.fn(async () => ({ id: nextId("pending") }));
+  const projectCommercialProfile = vi.fn(
+    overrides.projectCommercialProfileImpl ?? (async () => ({ created: true, updated: false, skipped: false })),
+  );
 
   const deps: WhatsAppGatewayDependencies = {
     findPhoneNumberByPhoneNumberId: async (phoneNumberId) => phoneNumbers.get(phoneNumberId) ?? null,
@@ -98,9 +102,18 @@ function createFakeGatewayDeps(
     recordDomainEvent,
     applyStatusUpdate,
     enqueueMessage,
+    projectCommercialProfile,
   };
 
-  return { deps, store: { phoneNumbers, leads, conversations, entries }, runAnalysis, recordDomainEvent, applyStatusUpdate, enqueueMessage };
+  return {
+    deps,
+    store: { phoneNumbers, leads, conversations, entries },
+    runAnalysis,
+    recordDomainEvent,
+    applyStatusUpdate,
+    enqueueMessage,
+    projectCommercialProfile,
+  };
 }
 
 function textMessage(overrides: Partial<NormalizedWhatsAppMessage> = {}): NormalizedWhatsAppMessage {
@@ -197,6 +210,59 @@ describe("WhatsAppGateway.handleInboundMessage — 7. orchestration trigger", ()
     expect(result.duplicate).toBe(false);
     expect(result.analysisTriggered).toBe(false);
     expect(result.analysisError).toBeInstanceOf(Error);
+  });
+});
+
+describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Analytics v0 Phase 1 commercial-profile projection", () => {
+  it("calls projectCommercialProfile with the resolved businessId/leadId only after analysis succeeds", async () => {
+    const { deps, projectCommercialProfile } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    expect(projectCommercialProfile).toHaveBeenCalledTimes(1);
+    expect(projectCommercialProfile).toHaveBeenCalledWith("biz-1", result.leadId);
+    expect(result.profileProjected).toBe(true);
+    expect(result.profileProjectionError).toBeUndefined();
+  });
+
+  it("does not call projectCommercialProfile when analysis fails", async () => {
+    const failingRunAnalysis = vi.fn(async () => {
+      throw new Error("AI provider unavailable");
+    });
+    const { deps, projectCommercialProfile } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      runAnalysisImpl: failingRunAnalysis,
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    expect(projectCommercialProfile).not.toHaveBeenCalled();
+    expect(result.profileProjected).toBe(false);
+    expect(result.profileProjectionError).toBeUndefined();
+  });
+
+  it("swallows a projection failure — never throws, message/entry are still persisted, result still returns normally", async () => {
+    const failingProjection = vi.fn(async () => {
+      throw new Error("projection unavailable");
+    });
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      projectCommercialProfileImpl: failingProjection,
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    expect(result.duplicate).toBe(false);
+    expect(result.entryId).toBeDefined();
+    expect(store.entries.size).toBe(1);
+    expect(result.analysisTriggered).toBe(true);
+    expect(result.profileProjected).toBe(false);
+    expect(result.profileProjectionError).toBeInstanceOf(Error);
   });
 });
 

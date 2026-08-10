@@ -62,6 +62,10 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
         await db!.conversationEntry.deleteMany({ where: { conversationId: { in: conversationIds } } });
       }
       await db!.conversation.deleteMany({ where: { leadId: lead.id } });
+      // Kori Natural Language Analytics v0 Phase 1 — no cascade delete off
+      // Lead, and this suite's default gateway (unlike most others) doesn't
+      // override projectCommercialProfile, so a real row is likely here.
+      await db!.leadCommercialProfile.deleteMany({ where: { leadId: lead.id } });
       await db!.lead.delete({ where: { id: lead.id } });
     }
 
@@ -94,6 +98,16 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
 
     const decisions = await db!.decisionRecord.findMany({ where: { conversationId: result.conversationId! } });
     expect(decisions.length).toBeGreaterThan(0);
+
+    // Kori Natural Language Analytics v0 Phase 1 — minimalProviderResult's
+    // facts/inferences are all null (tier 2 contributes nothing), so this
+    // proves the deterministic Lead Commercial State (tier 3) alone
+    // produced a real, persisted profile — "Hilux" is in
+    // KNOWN_VEHICLE_MODELS (freetext-product-extractor.ts).
+    expect(result.profileProjected).toBe(true);
+    expect(result.profileProjectionError).toBeUndefined();
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: result.leadId! } });
+    expect(profile?.vehicleModel).toContain("Hilux");
   });
 
   it("4. duplicate detection: a re-delivered wamid is safely skipped at the database level", async () => {

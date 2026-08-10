@@ -16,6 +16,7 @@ import type {
 import type { RecordDomainEventInput, RecordDomainEventResult } from "@/server/orchestration/record-domain-event";
 import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
 import { findOrCreateLeadByPhone } from "@/server/services/lead-service";
+import { projectLeadCommercialProfile, type ProjectLeadCommercialProfileResult } from "@/server/services/lead-commercial-profile-service";
 import {
   appendWhatsAppEntry,
   findConversationEntryByExternalId,
@@ -64,6 +65,10 @@ export interface InboundMessageResult {
   observationsRecorded: boolean;
   /** Set when recording a domain event failed — never thrown, same best-effort contract as analysisError. */
   observationError?: unknown;
+  /** Kori Natural Language Analytics v0 Phase 1 — whether LeadCommercialProfile was (re)projected. Only attempted when analysisTriggered. */
+  profileProjected: boolean;
+  /** Set when projection failed — never thrown, same best-effort contract as analysisError/observationError. */
+  profileProjectionError?: unknown;
 }
 
 export interface StatusEventResult {
@@ -119,6 +124,8 @@ export interface WhatsAppGatewayDependencies {
   runAnalysis?: (input: AnalyzeConversationAndCreateDecisionsInput) => Promise<AnalyzeConversationAndCreateDecisionsResult>;
   /** Observer Mode v1 — best-effort, never allowed to fail the underlying WhatsApp write it's describing. */
   recordDomainEvent?: (input: RecordDomainEventInput) => Promise<RecordDomainEventResult>;
+  /** Kori Natural Language Analytics v0 Phase 1 — best-effort, same contract as runAnalysis/recordDomainEvent. */
+  projectCommercialProfile?: (businessId: string, leadId: string) => Promise<ProjectLeadCommercialProfileResult>;
   applyStatusUpdate?: (input: {
     externalId: string;
     status: NormalizedWhatsAppStatus["status"];
@@ -204,6 +211,8 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
       overrides.loadConversationForAnalysis ?? ((conversationId: string) => defaultLoadConversationForAnalysis(conversationId, db)),
     runAnalysis: overrides.runAnalysis ?? defaultRunAnalysis,
     recordDomainEvent: overrides.recordDomainEvent ?? ((input: RecordDomainEventInput) => defaultRecordDomainEvent(input, db)),
+    projectCommercialProfile:
+      overrides.projectCommercialProfile ?? ((businessId: string, leadId: string) => projectLeadCommercialProfile(businessId, leadId, db)),
     applyStatusUpdate: overrides.applyStatusUpdate ?? ((input: Parameters<typeof applyStatusUpdateDefault>[0]) => applyStatusUpdateDefault(input, db)),
     enqueueMessage: overrides.enqueueMessage ?? ((input: EnqueuePendingMessageInput) => enqueuePendingMessageDefault(input, db)),
   };
@@ -214,7 +223,7 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
       // safely exit as cheaply as possible.
       const existingEntry = await deps.findEntryByExternalId(message.externalId);
       if (existingEntry) {
-        return { duplicate: true, analysisTriggered: false, observationsRecorded: false };
+        return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false };
       }
 
       // 1-2. Identify business + connected WhatsApp number.
@@ -256,7 +265,7 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         // Two concurrent deliveries of the same wamid raced past the check
         // above — the unique constraint is the real backstop.
         if (isUniqueConstraintViolation(error)) {
-          return { duplicate: true, analysisTriggered: false, observationsRecorded: false };
+          return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false };
         }
         throw error;
       }
@@ -331,6 +340,23 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         analysisError = error;
       }
 
+      // 8. Kori Natural Language Analytics v0 Phase 1 — best-effort projection
+      // of LeadCommercialProfile from the newest available commercial facts.
+      // Only attempted after a successful analysis run (no point projecting
+      // off a stale/absent snapshot otherwise) — but the projection itself
+      // independently reads the latest snapshot rather than depending on
+      // this turn's specific output, so it's safe even when nothing changed.
+      let profileProjected = false;
+      let profileProjectionError: unknown;
+      if (analysisTriggered) {
+        try {
+          await deps.projectCommercialProfile(phoneNumber.businessId, lead.id);
+          profileProjected = true;
+        } catch (error) {
+          profileProjectionError = error;
+        }
+      }
+
       return {
         duplicate: false,
         businessId: phoneNumber.businessId,
@@ -342,6 +368,8 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         analysisError,
         observationsRecorded,
         observationError,
+        profileProjected,
+        profileProjectionError,
       };
     },
 
