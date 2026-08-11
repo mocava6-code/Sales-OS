@@ -12,7 +12,7 @@ function sign(body: string): string {
 
 function fakeGateway(overrides: Partial<WhatsAppGateway> = {}): WhatsAppGateway {
   return {
-    handleInboundMessage: vi.fn(async () => ({ duplicate: false, analysisTriggered: true, observationsRecorded: true, profileProjected: true })),
+    handleInboundMessage: vi.fn(async () => ({ duplicate: false, analysisTriggered: true, observationsRecorded: true, profileProjected: true, contactNameUpdated: false })),
     handleStatusEvent: vi.fn(async () => ({ applied: true })),
     handleBusinessAppEchoEvent: vi.fn(async () => ({ duplicate: false, observationsRecorded: true })),
     enqueueOutboundMessage: vi.fn(async () => ({ id: "pending-1" })),
@@ -165,7 +165,7 @@ describe("handleWebhookEvent — 2. parsing, 3. normalization dispatch, never tr
   });
 
   it("counts a duplicate result from the gateway separately from processed messages", async () => {
-    const gateway = fakeGateway({ handleInboundMessage: vi.fn(async () => ({ duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false })) });
+    const gateway = fakeGateway({ handleInboundMessage: vi.fn(async () => ({ duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false, contactNameUpdated: false })) });
     const body = JSON.stringify(textMessagePayload());
 
     const summary = await handleWebhookEvent(body, sign(body), { appSecret: APP_SECRET, gateway });
@@ -213,7 +213,7 @@ describe("handleWebhookEvent — 2. parsing, 3. normalization dispatch, never tr
       handleInboundMessage: vi.fn(async () => {
         call += 1;
         if (call === 1) throw new Error("boom");
-        return { duplicate: false, analysisTriggered: true, observationsRecorded: true, profileProjected: true };
+        return { duplicate: false, analysisTriggered: true, observationsRecorded: true, profileProjected: true, contactNameUpdated: false };
       }),
     });
     const body = JSON.stringify(

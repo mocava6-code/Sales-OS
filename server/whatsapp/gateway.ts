@@ -15,7 +15,7 @@ import type {
 } from "@/server/orchestration/types";
 import type { RecordDomainEventInput, RecordDomainEventResult } from "@/server/orchestration/record-domain-event";
 import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
-import { findOrCreateLeadByPhone } from "@/server/services/lead-service";
+import { applyWhatsAppContactName, findOrCreateLeadByPhone } from "@/server/services/lead-service";
 import { projectLeadCommercialProfile, type ProjectLeadCommercialProfileResult } from "@/server/services/lead-commercial-profile-service";
 import {
   appendWhatsAppEntry,
@@ -69,6 +69,10 @@ export interface InboundMessageResult {
   profileProjected: boolean;
   /** Set when projection failed — never thrown, same best-effort contract as analysisError/observationError. */
   profileProjectionError?: unknown;
+  /** Kori Data Correctness Phase 1B — whether the Lead's placeholder name was upgraded to its WhatsApp contact profile name. False for a duplicate, a missing/blank contactName, or a Lead whose name was already something other than the phone placeholder. */
+  contactNameUpdated: boolean;
+  /** Set when the upgrade failed — never thrown, same best-effort contract as profileProjectionError. */
+  contactNameError?: unknown;
 }
 
 export interface StatusEventResult {
@@ -110,7 +114,12 @@ export interface WhatsAppGatewayDependencies {
   findOrCreateLead?: (
     businessId: string,
     phone: string,
-  ) => Promise<{ id: string; assignedToUserId: string | null }>;
+  ) => Promise<{ id: string; name: string; phone: string; assignedToUserId: string | null }>;
+  /** Kori Data Correctness Phase 1B — best-effort, never blocks message persistence. See lead-service.ts's applyWhatsAppContactName for the exact placeholder-only upgrade rule. */
+  applyContactName?: (
+    lead: { id: string; name: string; phone: string },
+    contactName: string | undefined,
+  ) => Promise<{ updated: boolean; name: string }>;
   findOrCreateConversation?: (
     businessId: string,
     leadId: string,
@@ -211,9 +220,11 @@ function sanitizeErrorForLogging(error: unknown): { code: string; message: strin
  * length-capped error code/message.
  */
 function logPipelineStepFailure(
-  stage: "analysis" | "commercial_profile_projection",
+  stage: "analysis" | "commercial_profile_projection" | "contact_name_upgrade",
   error: unknown,
-  context: { businessId: string; leadId: string; conversationId: string },
+  // conversationId is optional — the contact-name-upgrade step runs before
+  // a conversation is resolved (step 3b, ahead of step 4).
+  context: { businessId: string; leadId: string; conversationId?: string },
 ): void {
   const { code, message } = sanitizeErrorForLogging(error);
   console.error("[whatsapp gateway] pipeline step failed", {
@@ -239,6 +250,9 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
     findPhoneNumberByPhoneNumberId:
       overrides.findPhoneNumberByPhoneNumberId ?? ((phoneNumberId: string) => defaultFindPhoneNumberByPhoneNumberId(phoneNumberId, db)),
     findOrCreateLead: overrides.findOrCreateLead ?? ((businessId: string, phone: string) => findOrCreateLeadByPhone(businessId, phone, db)),
+    applyContactName:
+      overrides.applyContactName ??
+      ((lead: { id: string; name: string; phone: string }, contactName: string | undefined) => applyWhatsAppContactName(lead, contactName, db)),
     findOrCreateConversation:
       overrides.findOrCreateConversation ??
       ((businessId: string, leadId: string, whatsappPhoneNumberId: string) =>
@@ -263,7 +277,7 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
       // safely exit as cheaply as possible.
       const existingEntry = await deps.findEntryByExternalId(message.externalId);
       if (existingEntry) {
-        return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false };
+        return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false, contactNameUpdated: false };
       }
 
       // 1-2. Identify business + connected WhatsApp number.
@@ -274,6 +288,20 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
 
       // 3. Identify customer.
       const lead = await deps.findOrCreateLead(phoneNumber.businessId, message.fromPhoneNumber);
+
+      // 3b. Kori Data Correctness Phase 1B — opportunistically upgrade a
+      // placeholder Lead name to the WhatsApp contact's profile name.
+      // Best-effort, never blocks message persistence — same contract as
+      // steps 7/8 below.
+      let contactNameUpdated = false;
+      let contactNameError: unknown;
+      try {
+        const result = await deps.applyContactName(lead, message.contactName);
+        contactNameUpdated = result.updated;
+      } catch (error) {
+        contactNameError = error;
+        logPipelineStepFailure("contact_name_upgrade", error, { businessId: phoneNumber.businessId, leadId: lead.id });
+      }
 
       // 4. Locate or create conversation.
       const conversation = await deps.findOrCreateConversation(phoneNumber.businessId, lead.id, phoneNumber.id);
@@ -305,7 +333,7 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         // Two concurrent deliveries of the same wamid raced past the check
         // above — the unique constraint is the real backstop.
         if (isUniqueConstraintViolation(error)) {
-          return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false };
+          return { duplicate: true, analysisTriggered: false, observationsRecorded: false, profileProjected: false, contactNameUpdated: false };
         }
         throw error;
       }
@@ -416,6 +444,8 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         observationError,
         profileProjected,
         profileProjectionError,
+        contactNameUpdated,
+        contactNameError,
       };
     },
 

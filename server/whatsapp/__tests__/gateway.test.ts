@@ -6,6 +6,7 @@ import type { NormalizedWhatsAppBusinessAppMessage, NormalizedWhatsAppMessage, N
 interface FakeLead {
   id: string;
   businessId: string;
+  name: string;
   phone: string;
   assignedToUserId: string | null;
 }
@@ -68,9 +69,22 @@ function createFakeGatewayDeps(
     findOrCreateLead: async (businessId, phone) => {
       const existing = [...leads.values()].find((l) => l.businessId === businessId && l.phone === phone);
       if (existing) return existing;
-      const lead: FakeLead = { id: nextId("lead"), businessId, phone, assignedToUserId: overrides.leadAssignments?.[phone] ?? null };
+      const lead: FakeLead = { id: nextId("lead"), businessId, name: phone, phone, assignedToUserId: overrides.leadAssignments?.[phone] ?? null };
       leads.set(lead.id, lead);
       return lead;
+    },
+    // Mirrors applyWhatsAppContactName's real placeholder-only-upgrade rule
+    // against the in-memory `leads` map — never the real DB (this suite
+    // passes no `db` override to createWhatsAppGateway, so the real default
+    // would otherwise hit the production Prisma singleton).
+    applyContactName: async (lead, contactName) => {
+      const trimmed = contactName?.trim();
+      if (!trimmed) return { updated: false, name: lead.name };
+      if (lead.name !== lead.phone) return { updated: false, name: lead.name };
+      if (trimmed === lead.name) return { updated: false, name: lead.name };
+      const existing = leads.get(lead.id);
+      if (existing) existing.name = trimmed;
+      return { updated: true, name: trimmed };
     },
     findOrCreateConversation: async (businessId, leadId, whatsappPhoneNumberId) => {
       const existing = [...conversations.values()].find((c) => c.businessId === businessId && c.leadId === leadId);
@@ -142,6 +156,62 @@ describe("WhatsAppGateway.handleInboundMessage — 5/6. conversation creation an
     expect(result.businessId).toBe("biz-1");
     expect(store.leads.size).toBe(1);
     expect(store.conversations.size).toBe(1);
+  });
+
+  it("Kori Data Correctness Phase 1B — a new lead gets the WhatsApp contact profile name", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage({ contactName: "Juan Pérez" }));
+
+    expect(result.contactNameUpdated).toBe(true);
+    const lead = [...store.leads.values()][0];
+    expect(lead.name).toBe("Juan Pérez");
+  });
+
+  it("Kori Data Correctness Phase 1B — a placeholder lead from an earlier message is upgraded once a contact name becomes available", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const first = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.NO_NAME" })); // no contactName — stays a phone placeholder
+    expect(first.contactNameUpdated).toBe(false);
+
+    const second = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.WITH_NAME", contactName: "María López" }));
+    expect(second.contactNameUpdated).toBe(true);
+    expect(store.leads.size).toBe(1); // same lead, matched by phone — not a second one
+    expect([...store.leads.values()][0].name).toBe("María López");
+  });
+
+  it("Kori Data Correctness Phase 1B — never overwrites a name a human already edited", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleInboundMessage(textMessage({ externalId: "wamid.FIRST", contactName: "Juan Pérez" }));
+    const [lead] = [...store.leads.values()];
+    lead.name = "Juan (cliente VIP)"; // simulates a human editing the Lead's name in the UI
+
+    const result = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.SECOND", contactName: "A Totally Different Name" }));
+
+    expect(result.contactNameUpdated).toBe(false);
+    expect([...store.leads.values()][0].name).toBe("Juan (cliente VIP)");
+  });
+
+  it("Kori Data Correctness Phase 1B — missing contactName leaves the lead's name unchanged", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage()); // no contactName override — undefined
+
+    expect(result.contactNameUpdated).toBe(false);
+    expect([...store.leads.values()][0].name).toBe("16315551234"); // still the phone placeholder
   });
 
   it("reuses the same conversation for a second message from the same lead", async () => {
