@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KoriAIConfigurationError, KoriNaturalLanguageParseError } from "../errors";
+import { KoriAIConfigurationError, KoriNaturalLanguageParseError, UnsupportedKoriQuestionError } from "../errors";
 import { createGroqClient, createGroqClientFromEnv } from "../groq-client";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -112,5 +112,65 @@ describe("createGroqClient", () => {
 
     const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
     await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(KoriNaturalLanguageParseError);
+  });
+
+  describe("Groq generation-failure sentinel mapping (json_validate_failed / failed_generation)", () => {
+    it("maps a 400 with failed_generation exactly {\"unsupported\": true} to UnsupportedKoriQuestionError", async () => {
+      const errorBody = JSON.stringify({
+        error: {
+          message: "Generated JSON does not match the expected schema.",
+          type: "invalid_request_error",
+          code: "json_validate_failed",
+          failed_generation: '{"unsupported": true}',
+        },
+      });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(errorBody, { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(UnsupportedKoriQuestionError);
+    });
+
+    it("also recognizes a flat (non-nested) code/failed_generation shape", async () => {
+      const errorBody = JSON.stringify({ code: "json_validate_failed", failed_generation: { unsupported: true } });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(errorBody, { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(UnsupportedKoriQuestionError);
+    });
+
+    it("does NOT map to UnsupportedKoriQuestionError when failed_generation has extra keys beyond unsupported", async () => {
+      const errorBody = JSON.stringify({
+        error: { code: "json_validate_failed", failed_generation: '{"unsupported": true, "operation": "COUNT_LEADS"}' },
+      });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(errorBody, { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(KoriNaturalLanguageParseError);
+    });
+
+    it("does NOT map to UnsupportedKoriQuestionError when failed_generation is a malformed 'supported' attempt (missing sort/groupBy/limit)", async () => {
+      const errorBody = JSON.stringify({
+        error: { code: "json_validate_failed", failed_generation: '{"unsupported": false, "operation": "LIST_LEADS"}' },
+      });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(errorBody, { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(KoriNaturalLanguageParseError);
+    });
+
+    it("does NOT map to UnsupportedKoriQuestionError for a different error code", async () => {
+      const errorBody = JSON.stringify({ error: { code: "invalid_request_error", message: "bad schema" } });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(errorBody, { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(KoriNaturalLanguageParseError);
+    });
+
+    it("falls back to KoriNaturalLanguageParseError when the error body isn't valid JSON", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not json at all", { status: 400 })));
+
+      const client = createGroqClient({ model: "test-model", apiKey: "test-key" });
+      await expect(client.complete({ systemPrompt: "sys", userPrompt: "user" })).rejects.toThrow(KoriNaturalLanguageParseError);
+    });
   });
 });

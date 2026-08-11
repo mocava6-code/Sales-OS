@@ -20,7 +20,7 @@
 // adapter small and dependency-free, same spirit as the Anthropic
 // adapter's narrow surface (server/intelligence/providers/anthropic-ai-provider.ts).
 
-import { KoriAIConfigurationError, KoriNaturalLanguageParseError, KoriProviderRateLimitedError } from "./errors";
+import { KoriAIConfigurationError, KoriNaturalLanguageParseError, KoriProviderRateLimitedError, UnsupportedKoriQuestionError } from "./errors";
 
 const GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MAX_TOKENS = 1024;
@@ -149,6 +149,17 @@ function createRealSendMessage(config: GroqClientConfig): GroqSendMessage {
       if (response.status === 429) {
         throw new KoriProviderRateLimitedError("Groq rate limit exceeded (429).", sanitizedBody || undefined);
       }
+      // Groq's strict json_schema mode can reject the MODEL's own
+      // generation (not the schema definition) when the model emits only
+      // the bare {"unsupported": true} sentinel instead of the full
+      // wire-format shape — confirmed against repeated real production
+      // failures. Recognized ONLY when the error body's failed_generation
+      // parses to EXACTLY {"unsupported": true}, nothing else — any other
+      // shape (a partial/malformed "supported" attempt, extra keys) falls
+      // through to the generic error below, never silently treated as safe.
+      if (isUnsupportedSentinelGenerationFailure(bodyText)) {
+        throw new UnsupportedKoriQuestionError("This question is not supported by Kori's query engine yet.");
+      }
       throw new KoriNaturalLanguageParseError(`Groq request failed with status ${response.status}.`, sanitizedBody || undefined);
     }
 
@@ -165,6 +176,46 @@ function createRealSendMessage(config: GroqClientConfig): GroqSendMessage {
     }
     return text;
   };
+}
+
+/**
+ * Recognizes Groq's structured-output generation-failure error shape:
+ *   {"error": {"code": "json_validate_failed", "failed_generation": "{\"unsupported\": true}", ...}}
+ * (also tolerates a flat, non-nested `code`/`failed_generation` shape,
+ * and `failed_generation` already being an object rather than a JSON
+ * string, defensively). Returns true ONLY when failed_generation parses
+ * to an object with exactly one key, `unsupported`, set to `true` — never
+ * for arbitrary/partial/malformed generations.
+ */
+function isUnsupportedSentinelGenerationFailure(bodyText: string): boolean {
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    return false;
+  }
+  if (typeof body !== "object" || body === null) return false;
+  const bodyObj = body as Record<string, unknown>;
+
+  const errorObj = typeof bodyObj.error === "object" && bodyObj.error !== null ? (bodyObj.error as Record<string, unknown>) : undefined;
+  const code = errorObj?.code ?? bodyObj.code;
+  if (code !== "json_validate_failed") return false;
+
+  const rawFailedGeneration = errorObj?.failed_generation ?? bodyObj.failed_generation;
+  let failedGeneration: unknown;
+  if (typeof rawFailedGeneration === "string") {
+    try {
+      failedGeneration = JSON.parse(rawFailedGeneration);
+    } catch {
+      return false;
+    }
+  } else {
+    failedGeneration = rawFailedGeneration;
+  }
+
+  if (typeof failedGeneration !== "object" || failedGeneration === null || Array.isArray(failedGeneration)) return false;
+  const keys = Object.keys(failedGeneration);
+  return keys.length === 1 && keys[0] === "unsupported" && (failedGeneration as Record<string, unknown>).unsupported === true;
 }
 
 /** Narrow, defensive extraction of `choices[0].message.content` — Groq's response body is untyped `unknown` at this boundary. */
