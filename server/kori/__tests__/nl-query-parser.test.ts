@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { KoriNaturalLanguageParseError, UnsupportedKoriQuestionError } from "../errors";
 import { parseNaturalLanguageToKoriQuery } from "../nl-query-parser";
+import { buildKoriGroqTransportJsonSchema } from "../groq-transport-schema";
 import type { GroqClient, GroqCompletionRequest } from "../groq-client";
 
 const NOW = new Date("2026-08-06T15:30:00.000Z"); // Thursday, America/Lima local 10:30
@@ -203,5 +204,63 @@ describe("parseNaturalLanguageToKoriQuery — normalization compatibility", () =
       '{"operation":"LIST_LEADS","filters":{"vehicleBrand":"Chevrolet"}}',
     );
     expect(spec.filters?.vehicleBrand).toBe("Chevrolet");
+  });
+});
+
+describe("parseNaturalLanguageToKoriQuery — json_schema structured-output mode (production regression)", () => {
+  const ORIGINAL_ENV = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("requests the Groq transport schema (not the loose KoriQuerySpec shape) when KORI_GROQ_STRUCTURED_OUTPUT_MODE=json_schema", async () => {
+    process.env.KORI_GROQ_STRUCTURED_OUTPUT_MODE = "json_schema";
+    const { groqClient } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '{"operation":"COUNT_LEADS"}');
+    const call = groqClient.complete.mock.calls[0][0] as GroqCompletionRequest;
+    expect(call.jsonSchema).toEqual(buildKoriGroqTransportJsonSchema());
+  });
+
+  it("does not request a jsonSchema when KORI_GROQ_STRUCTURED_OUTPUT_MODE is unset (JSON mode default)", async () => {
+    delete process.env.KORI_GROQ_STRUCTURED_OUTPUT_MODE;
+    const { groqClient } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '{"operation":"COUNT_LEADS"}');
+    const call = groqClient.complete.mock.calls[0][0] as GroqCompletionRequest;
+    expect(call.jsonSchema).toBeUndefined();
+  });
+
+  it("regression: correctly resolves the exact transport-shaped response a real strict-mode Groq call now produces for the production failure question", async () => {
+    process.env.KORI_GROQ_STRUCTURED_OUTPUT_MODE = "json_schema";
+    // This is the shape openai/gpt-oss-20b actually returns once the
+    // schema fix is applied — every field present, unused ones null —
+    // for "¿Cuántos clientes necesitan respuesta?", the exact question
+    // that previously triggered the production 400.
+    const transportResponse = JSON.stringify({
+      unsupported: false,
+      operation: "COUNT_LEADS",
+      filters: {
+        vehicleBrand: null,
+        vehicleModel: null,
+        vehicleYear: null,
+        productInterest: null,
+        customerType: null,
+        needsReply: true,
+        overdueFollowUp: null,
+        leadStatus: null,
+        priority: null,
+        assignedAgentId: null,
+        createdFrom: null,
+        createdTo: null,
+        lastActivityBefore: null,
+        lastActivityAfter: null,
+        outcomeType: null,
+      },
+      groupBy: null,
+      sort: { field: null, direction: null },
+      limit: null,
+    });
+
+    const { spec } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", transportResponse);
+    expect(spec.operation).toBe("COUNT_LEADS");
+    expect(spec.filters?.needsReply).toBe(true);
   });
 });

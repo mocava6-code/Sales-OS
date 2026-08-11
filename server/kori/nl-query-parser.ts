@@ -25,8 +25,9 @@ import {
 } from "./query-spec";
 import { InvalidKoriQuerySpecError, KoriNaturalLanguageParseError, UnsupportedKoriQuestionError } from "./errors";
 import { KORI_DATE_TOKENS, KORI_DEFAULT_TIMEZONE, resolveDateTokensInQueryJson } from "./date-interpretation";
-import { createGroqClientFromEnv, type GroqClient, type GroqJsonSchema } from "./groq-client";
+import { createGroqClientFromEnv, type GroqClient } from "./groq-client";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
+import { buildKoriGroqTransportJsonSchema, transportToKoriQuerySpecJson } from "./groq-transport-schema";
 
 const MAX_QUESTION_LENGTH = 500;
 
@@ -77,10 +78,6 @@ function extractJsonCandidate(rawText: string): string {
   return trimmed;
 }
 
-function isUnsupportedSentinel(value: unknown): boolean {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && (value as Record<string, unknown>).unsupported === true;
-}
-
 /**
  * Canonicalizes Groq's free-text vehicleBrand/vehicleModel filter values
  * (e.g. "toyota" -> "Toyota") using the same lookup tables the query
@@ -111,51 +108,6 @@ function normalizeFreeTextFiltersInQueryJson(raw: unknown): unknown {
   }
 
   return { ...obj, filters: normalizedFilters };
-}
-
-function buildKoriQueryJsonSchema(): GroqJsonSchema {
-  return {
-    name: "kori_query_spec",
-    schema: {
-      type: "object",
-      properties: {
-        unsupported: { type: "boolean" },
-        operation: { type: "string", enum: [...KORI_QUERY_OPERATIONS] },
-        filters: {
-          type: "object",
-          properties: {
-            vehicleBrand: { type: "string" },
-            vehicleModel: { type: "string" },
-            vehicleYear: { type: "integer" },
-            productInterest: { type: "string" },
-            customerType: { type: "string", enum: [...CUSTOMER_TYPE_FILTER_VALUES] },
-            needsReply: { type: "boolean" },
-            overdueFollowUp: { type: "boolean" },
-            leadStatus: { type: "string", enum: [...LEAD_STATUS_VALUES] },
-            priority: { type: "string", enum: [...LEAD_PRIORITY_VALUES] },
-            assignedAgentId: { type: "string" },
-            createdFrom: { type: "string" },
-            createdTo: { type: "string" },
-            lastActivityBefore: { type: "string" },
-            lastActivityAfter: { type: "string" },
-            outcomeType: { type: "string", enum: [...OUTCOME_TYPE_VALUES] },
-          },
-          additionalProperties: false,
-        },
-        groupBy: { type: "string", enum: [...KORI_GROUP_BY_FIELDS] },
-        sort: {
-          type: "object",
-          properties: {
-            field: { type: "string", enum: [...KORI_SORT_FIELDS] },
-            direction: { type: "string", enum: ["asc", "desc"] },
-          },
-          additionalProperties: false,
-        },
-        limit: { type: "integer" },
-      },
-      additionalProperties: false,
-    },
-  };
 }
 
 function buildSystemPrompt(): string {
@@ -223,7 +175,7 @@ export async function parseNaturalLanguageToKoriQuery(
   const rawText = await groqClient.complete({
     systemPrompt: buildSystemPrompt(),
     userPrompt: question,
-    jsonSchema: shouldUseJsonSchemaMode() ? buildKoriQueryJsonSchema() : undefined,
+    jsonSchema: shouldUseJsonSchemaMode() ? buildKoriGroqTransportJsonSchema() : undefined,
   });
 
   const candidate = extractJsonCandidate(rawText);
@@ -234,11 +186,12 @@ export async function parseNaturalLanguageToKoriQuery(
     throw new KoriNaturalLanguageParseError("Groq did not return valid JSON.", cause);
   }
 
-  if (isUnsupportedSentinel(parsedJson)) {
-    throw new UnsupportedKoriQuestionError("This question is not supported by Kori's query engine yet.");
-  }
+  // Throws UnsupportedKoriQuestionError itself when Groq's `unsupported`
+  // sentinel is true. Safe to run on both json_schema (transport-shaped,
+  // nulls stripped here) and json_object (already-loose) responses.
+  const transportJson = transportToKoriQuerySpecJson(parsedJson);
 
-  const withResolvedDates = resolveDateTokensInQueryJson(parsedJson, now, timezone);
+  const withResolvedDates = resolveDateTokensInQueryJson(transportJson, now, timezone);
   const resolvedJson = normalizeFreeTextFiltersInQueryJson(withResolvedDates);
 
   try {
