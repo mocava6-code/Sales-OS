@@ -51,9 +51,21 @@ function buildLeadFilterConditions(
   if (filters.customerType) commercialProfileWhere.customerType = filters.customerType;
   if (Object.keys(commercialProfileWhere).length > 0) where.commercialProfile = commercialProfileWhere;
 
+  // needsReply is deliberately NOT applied here. "Some conversation has
+  // status NEEDS_REPLY" (a Prisma relation filter) is a different question
+  // than "the lead's own most-recently-touched conversation has status
+  // NEEDS_REPLY" (what toLeadRow displays as row.needsReply) — a Lead with
+  // multiple Conversations (manual entry, historical import, and a live
+  // WhatsApp thread are all separate creation paths that don't dedupe
+  // against each other) can satisfy the former via an OLDER conversation
+  // while its NEWEST conversation has a different status, producing a row
+  // whose displayed needsReply contradicts the filter that selected it —
+  // confirmed against a real production result. needsReply is instead
+  // applied as a post-fetch filter on the same top-1-by-lastEntryAt
+  // conversation toLeadRow already uses — see
+  // fetchNeedsReplyFilteredLeadRows, shared by executeCountLeads,
+  // executeListLeads, and executeFollowUpQueue so they can never disagree.
   const conversationsFilter: { some?: Prisma.ConversationWhereInput; none?: Prisma.ConversationWhereInput } = {};
-  if (filters.needsReply === true) conversationsFilter.some = { ...conversationsFilter.some, status: "NEEDS_REPLY" };
-  if (filters.needsReply === false) conversationsFilter.none = { ...conversationsFilter.none, status: "NEEDS_REPLY" };
   if (filters.lastActivityBefore || filters.lastActivityAfter) {
     const lastEntryAt: Prisma.DateTimeFilter = {};
     if (filters.lastActivityBefore) lastEntryAt.lt = new Date(filters.lastActivityBefore);
@@ -132,12 +144,56 @@ function sortRowsInMemory(rows: KoriLeadRow[], sort: KoriQuerySpec["sort"]): Kor
   });
 }
 
+/**
+ * The canonical needsReply-aware fetch: applies every WHERE-expressible
+ * filter, then filters in application code by each lead's OWN
+ * top-1-by-lastEntryAt conversation status — the exact same value
+ * toLeadRow's `needsReply` field reports, so a row can never disagree with
+ * why it was selected. Bounded by IN_MEMORY_PROCESSING_FETCH_CAP, same
+ * tradeoff as sortRowsInMemory/executeGroupLeads. executeCountLeads and
+ * executeListLeads both call this (never their own separate needsReply
+ * logic), which is what guarantees they can't drift apart again.
+ */
+async function fetchNeedsReplyFilteredLeadRows(
+  businessId: string,
+  filters: LeadFilters,
+  db: PrismaClientOrTransaction,
+): Promise<{ rows: KoriLeadRow[]; createdAtByLeadId: Map<string, Date> }> {
+  const where = buildLeadWhere(businessId, filters);
+  const leads = await db.lead.findMany({ where, include: LEAD_ROW_INCLUDE, orderBy: { createdAt: "desc" }, take: IN_MEMORY_PROCESSING_FETCH_CAP });
+  const createdAtByLeadId = new Map(leads.map((lead) => [lead.id, lead.createdAt]));
+  const rows = leads.map(toLeadRow).filter((row) => row.needsReply === filters!.needsReply);
+  return { rows, createdAtByLeadId };
+}
+
+function sortRowsByCreatedAtInMemory(rows: KoriLeadRow[], createdAtByLeadId: Map<string, Date>, direction: "asc" | "desc"): KoriLeadRow[] {
+  const factor = direction === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = createdAtByLeadId.get(a.leadId)!;
+    const bv = createdAtByLeadId.get(b.leadId)!;
+    return av < bv ? -factor : av > bv ? factor : 0;
+  });
+}
+
 async function executeCountLeads(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
+  if (spec.filters?.needsReply !== undefined) {
+    const { rows } = await fetchNeedsReplyFilteredLeadRows(businessId, spec.filters, db);
+    return { type: "count", count: rows.length };
+  }
   const count = await db.lead.count({ where: buildLeadWhere(businessId, spec.filters) });
   return { type: "count", count };
 }
 
 async function executeListLeads(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
+  if (spec.filters?.needsReply !== undefined) {
+    const { rows: matchingRows, createdAtByLeadId } = await fetchNeedsReplyFilteredLeadRows(businessId, spec.filters, db);
+    const sortedRows =
+      spec.sort?.field === "createdAt"
+        ? sortRowsByCreatedAtInMemory(matchingRows, createdAtByLeadId, spec.sort.direction)
+        : sortRowsInMemory(matchingRows, spec.sort);
+    return { type: "lead_list", count: matchingRows.length, rows: sortedRows.slice(0, spec.limit) };
+  }
+
   const where = buildLeadWhere(businessId, spec.filters);
   const count = await db.lead.count({ where });
 
@@ -216,6 +272,21 @@ async function executeFollowUpQueue(businessId: string, spec: KoriQuerySpec, db:
   };
   if (f?.overdueFollowUp) {
     followUpWhere.dueAt = { lt: new Date() };
+  }
+
+  if (f?.needsReply !== undefined) {
+    // Same needsReply post-filter as fetchNeedsReplyFilteredLeadRows,
+    // applied to the lead each pending follow-up belongs to — the WHERE
+    // clause above (via buildLeadFilterConditions) no longer expresses
+    // needsReply at all, for the same reason it doesn't for Lead queries.
+    const followUps = await db.followUp.findMany({
+      where: followUpWhere,
+      orderBy: { dueAt: "asc" },
+      take: IN_MEMORY_PROCESSING_FETCH_CAP,
+      include: { lead: { include: LEAD_ROW_INCLUDE } },
+    });
+    const matchingRows = followUps.map((fu) => toLeadRow(fu.lead)).filter((row) => row.needsReply === f.needsReply);
+    return { type: "lead_list", count: matchingRows.length, rows: matchingRows.slice(0, spec.limit) };
   }
 
   const count = await db.followUp.count({ where: followUpWhere });

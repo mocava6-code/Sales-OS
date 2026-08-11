@@ -67,6 +67,27 @@ async function createLead(db: Db, businessId: string, userId: string, opts: Crea
   return { lead, conversation };
 }
 
+/** Adds an ADDITIONAL conversation to an already-created lead — for multi-conversation needsReply-invariant tests, where createLead's single opts.conversation isn't enough. */
+async function addConversation(
+  db: Db,
+  businessId: string,
+  leadId: string,
+  userId: string,
+  opts: { status: "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED"; lastEntryAt: Date },
+) {
+  return db.conversation.create({
+    data: {
+      businessId,
+      leadId,
+      source: "MANUAL_PASTE",
+      status: opts.status,
+      lastEntryAt: opts.lastEntryAt,
+      lastEntryDirection: "INBOUND",
+      createdByUserId: userId,
+    },
+  });
+}
+
 async function createOutcome(
   db: Db,
   fixtureLike: TestFixture,
@@ -184,6 +205,125 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
       expect(result.count).toBe(1);
       expect(result.rows[0].phone).toBe("+10000000005");
     }
+  });
+
+  describe("needsReply invariant — a multi-conversation lead's own top-1-by-lastEntryAt conversation is canonical", () => {
+    it("a lead with an OLDER NEEDS_REPLY conversation and a NEWER WAITING_ON_CUSTOMER conversation is EXCLUDED from needsReply=true", async () => {
+      const { lead } = await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000101",
+        conversation: { status: "NEEDS_REPLY", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+      });
+      await addConversation(db!, fixture.businessId, lead.id, fixture.userId, {
+        status: "WAITING_ON_CUSTOMER",
+        lastEntryAt: new Date("2026-01-02T00:00:00Z"), // newer — this is the one that should decide needsReply
+      });
+
+      const listResult = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { needsReply: true } },
+        db: db!,
+      });
+      expect(listResult.type).toBe("lead_list");
+      if (listResult.type === "lead_list") {
+        expect(listResult.rows.every((row) => row.phone !== "+10000000101")).toBe(true);
+        // The invariant this whole phase exists to guarantee: every returned row actually needs reply.
+        expect(listResult.rows.every((row) => row.needsReply === true)).toBe(true);
+      }
+    });
+
+    it("a lead with an OLDER WAITING_ON_CUSTOMER conversation and a NEWER NEEDS_REPLY conversation IS included in needsReply=true", async () => {
+      const { lead } = await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000102",
+        conversation: { status: "WAITING_ON_CUSTOMER", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+      });
+      await addConversation(db!, fixture.businessId, lead.id, fixture.userId, {
+        status: "NEEDS_REPLY",
+        lastEntryAt: new Date("2026-01-03T00:00:00Z"), // newer
+      });
+
+      const listResult = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { needsReply: true } },
+        db: db!,
+      });
+      expect(listResult.type).toBe("lead_list");
+      if (listResult.type === "lead_list") {
+        const row = listResult.rows.find((r) => r.phone === "+10000000102");
+        expect(row).toBeDefined();
+        expect(row?.needsReply).toBe(true);
+      }
+    });
+
+    it("COUNT_LEADS and LIST_LEADS report the exact same needsReply=true count (before pagination), even with multi-conversation leads present", async () => {
+      // Same mixed-signal shape as the two tests above, plus a plain
+      // single-conversation lead on each side — a representative batch.
+      const excluded = await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000103",
+        conversation: { status: "NEEDS_REPLY", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+      });
+      await addConversation(db!, fixture.businessId, excluded.lead.id, fixture.userId, {
+        status: "WAITING_ON_CUSTOMER",
+        lastEntryAt: new Date("2026-01-02T00:00:00Z"),
+      });
+      await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000104",
+        conversation: { status: "NEEDS_REPLY", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+      });
+      await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000105",
+        conversation: { status: "WAITING_ON_CUSTOMER", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+      });
+
+      const countResult = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "COUNT_LEADS", filters: { needsReply: true } },
+        db: db!,
+      });
+      const listResult = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { needsReply: true }, limit: 1 }, // small limit — count must still reflect the FULL matching set, not the page
+        db: db!,
+      });
+
+      expect(countResult.type).toBe("count");
+      expect(listResult.type).toBe("lead_list");
+      if (countResult.type === "count" && listResult.type === "lead_list") {
+        expect(listResult.count).toBe(countResult.count);
+        // base fixture lead (NEEDS_REPLY by default) + "+10000000104" — NOT "+10000000103" (newest conversation is WAITING_ON_CUSTOMER) or "+10000000105".
+        expect(countResult.count).toBe(2);
+      }
+    });
+
+    it("FOLLOW_UP_QUEUE does not regress: needsReply=true still only returns leads whose newest conversation needs a reply", async () => {
+      const dueAt = new Date(Date.now() + 60_000);
+      const excluded = await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000106",
+        conversation: { status: "NEEDS_REPLY", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+        followUp: { dueAt, status: "PENDING" },
+      });
+      await addConversation(db!, fixture.businessId, excluded.lead.id, fixture.userId, {
+        status: "WAITING_ON_CUSTOMER",
+        lastEntryAt: new Date("2026-01-02T00:00:00Z"),
+      });
+      await createLead(db!, fixture.businessId, fixture.userId, {
+        phone: "+10000000107",
+        conversation: { status: "NEEDS_REPLY", lastEntryAt: new Date("2026-01-01T00:00:00Z") },
+        followUp: { dueAt, status: "PENDING" },
+      });
+
+      const result = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "FOLLOW_UP_QUEUE", filters: { needsReply: true } },
+        db: db!,
+      });
+
+      expect(result.type).toBe("lead_list");
+      if (result.type === "lead_list") {
+        expect(result.rows.some((r) => r.phone === "+10000000107")).toBe(true);
+        expect(result.rows.some((r) => r.phone === "+10000000106")).toBe(false);
+        expect(result.rows.every((row) => row.needsReply === true)).toBe(true);
+      }
+    });
   });
 
   it("filters by productInterest", async () => {
