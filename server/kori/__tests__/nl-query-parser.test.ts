@@ -263,4 +263,43 @@ describe("parseNaturalLanguageToKoriQuery — json_schema structured-output mode
     expect(spec.operation).toBe("COUNT_LEADS");
     expect(spec.filters?.needsReply).toBe(true);
   });
+
+  it("system prompt states the wire-format completeness contract and includes two full canonical examples", async () => {
+    const { groqClient } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '{"operation":"COUNT_LEADS"}');
+    const call = groqClient.complete.mock.calls[0][0] as GroqCompletionRequest;
+
+    expect(call.systemPrompt).toMatch(/ALWAYS be present/);
+    expect(call.systemPrompt).toMatch(/Never omit a filters key/);
+    // The two full canonical examples must literally include every declared
+    // filters key (not just the meaningful ones) — the exact property the
+    // real production model output was missing.
+    for (const field of ["vehicleModel", "vehicleYear", "productInterest", "leadStatus", "priority", "outcomeType"]) {
+      expect(call.systemPrompt).toContain(`"${field}":null`);
+    }
+    expect(call.systemPrompt).toContain('"vehicleBrand":"Toyota"');
+    expect(call.systemPrompt).toContain('"needsReply":true');
+  });
+
+  it("regression: resolves case=1's real production output — a sparse filters object missing 13 of 15 declared keys — even though the improved prompt asks the model not to produce this shape", async () => {
+    // The exact JSON Groq generated for "¿Cuáles son los clientes Toyota que
+    // necesitan respuesta?" that failed case=1: only the two meaningful
+    // filter keys present, everything else omitted rather than null. Groq's
+    // own strict-mode generation gate is what's supposed to prevent this
+    // now (via the prompt fix) — but our own pipeline must keep resolving
+    // it correctly regardless, since we don't control the model's
+    // compliance, only influence it.
+    const sparseResponse = JSON.stringify({
+      unsupported: false,
+      operation: "LIST_LEADS",
+      filters: { vehicleBrand: "Toyota", needsReply: true },
+      groupBy: null,
+      sort: null,
+      limit: null,
+    });
+
+    const { spec } = await parseWithMock("¿Cuáles son los clientes Toyota que necesitan respuesta?", sparseResponse);
+    expect(spec.operation).toBe("LIST_LEADS");
+    expect(spec.filters?.vehicleBrand).toBe("Toyota");
+    expect(spec.filters?.needsReply).toBe(true);
+  });
 });

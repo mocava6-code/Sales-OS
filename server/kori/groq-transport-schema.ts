@@ -59,6 +59,14 @@ const FILTERS_PROPERTIES = {
   outcomeType: nullableEnum(OUTCOME_TYPE_VALUES),
 } as const;
 
+/**
+ * Every filters key the transport schema declares, in schema order — used
+ * to build the full-presence canonical examples in the system prompt
+ * (nl-query-parser.ts) programmatically, so those examples can never drift
+ * out of sync with the actual schema.
+ */
+export const KORI_TRANSPORT_FILTER_FIELDS = Object.keys(FILTERS_PROPERTIES) as (keyof typeof FILTERS_PROPERTIES)[];
+
 const SORT_PROPERTIES = {
   field: nullableEnum(KORI_SORT_FIELDS),
   direction: { type: ["string", "null"], enum: ["asc", "desc", null] },
