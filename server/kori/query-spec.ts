@@ -36,9 +36,12 @@ export type KoriSortField = (typeof KORI_SORT_FIELDS)[number];
 // zod-compatible, so these are redeclared here (same pattern already used
 // elsewhere in this codebase, e.g. lib/validations/whatsapp.ts's
 // historicalImportDateOrderSchema mirroring ImportDateOrder).
-const LEAD_STATUS_VALUES = ["NEW", "CONTACTED", "FOLLOW_UP", "WON", "LOST"] as const;
-const LEAD_PRIORITY_VALUES = ["NORMAL", "HIGH"] as const;
-const OUTCOME_TYPE_VALUES = [
+// Exported (not just module-local) so the Kori NL parser's Groq-facing
+// schema/prompt (server/kori/nl-query-parser.ts) can build its enum lists
+// from these directly, instead of redeclaring them and risking drift.
+export const LEAD_STATUS_VALUES = ["NEW", "CONTACTED", "FOLLOW_UP", "WON", "LOST"] as const;
+export const LEAD_PRIORITY_VALUES = ["NORMAL", "HIGH"] as const;
+export const OUTCOME_TYPE_VALUES = [
   "CUSTOMER_REPLIED",
   "MEETING_SCHEDULED",
   "FOLLOW_UP_SENT",
@@ -51,7 +54,7 @@ const OUTCOME_TYPE_VALUES = [
 // UNKNOWN deliberately excluded from the filter — see plan §E. A lead's
 // actual stored customerType can still be UNKNOWN; you just can't filter
 // FOR it this phase.
-const CUSTOMER_TYPE_FILTER_VALUES = ["RETAIL", "WHOLESALE"] as const;
+export const CUSTOMER_TYPE_FILTER_VALUES = ["RETAIL", "WHOLESALE"] as const;
 
 export const KORI_QUERY_DEFAULT_LIMIT = 25;
 export const KORI_QUERY_MAX_LIMIT = 100;
