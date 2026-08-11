@@ -65,7 +65,7 @@ export interface InboundMessageResult {
   observationsRecorded: boolean;
   /** Set when recording a domain event failed — never thrown, same best-effort contract as analysisError. */
   observationError?: unknown;
-  /** Kori Natural Language Analytics v0 Phase 1 — whether LeadCommercialProfile was (re)projected. Only attempted when analysisTriggered. */
+  /** Kori Natural Language Analytics v0 Phase 1 — whether LeadCommercialProfile was (re)projected. Always attempted, independent of analysisTriggered — deterministic extraction must keep working when AI analysis fails or is unconfigured. */
   profileProjected: boolean;
   /** Set when projection failed — never thrown, same best-effort contract as analysisError/observationError. */
   profileProjectionError?: unknown;
@@ -184,6 +184,46 @@ function defaultRecordDomainEvent(input: RecordDomainEventInput, db: PrismaClien
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+// Caps how much of a thrown error's own message can reach logs — a bound,
+// not a guarantee: this codebase's own custom errors (e.g.
+// ConversationAnalysisFailedError's message is a static template with only
+// a conversationId interpolated) are already safe by construction, but a
+// third-party SDK/Prisma error's message is untrusted, so truncating limits
+// worst-case exposure rather than trying to parse every possible shape.
+const MAX_SANITIZED_ERROR_MESSAGE_LENGTH = 300;
+
+function sanitizeErrorForLogging(error: unknown): { code: string; message: string } {
+  if (error instanceof Error) {
+    return { code: error.name, message: error.message.slice(0, MAX_SANITIZED_ERROR_MESSAGE_LENGTH) };
+  }
+  return { code: "UnknownError", message: String(error).slice(0, MAX_SANITIZED_ERROR_MESSAGE_LENGTH) };
+}
+
+/**
+ * Structured failure log for the two best-effort pipeline steps
+ * (analysis, commercial-profile projection) — neither is ever allowed to
+ * throw past handleInboundMessage, so this is the only place either
+ * failure becomes observable. Deliberately excludes message content,
+ * tokens/API keys, full phone numbers, and raw ConversationSnapshot JSON —
+ * only identifiers (safe to log elsewhere in this codebase already) and a
+ * length-capped error code/message.
+ */
+function logPipelineStepFailure(
+  stage: "analysis" | "commercial_profile_projection",
+  error: unknown,
+  context: { businessId: string; leadId: string; conversationId: string },
+): void {
+  const { code, message } = sanitizeErrorForLogging(error);
+  console.error("[whatsapp gateway] pipeline step failed", {
+    businessId: context.businessId,
+    leadId: context.leadId,
+    conversationId: context.conversationId,
+    stage,
+    errorCode: code,
+    errorMessage: message,
+  });
 }
 
 /**
@@ -338,23 +378,29 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         analysisTriggered = true;
       } catch (error) {
         analysisError = error;
+        logPipelineStepFailure("analysis", error, { businessId: phoneNumber.businessId, leadId: lead.id, conversationId: conversation.id });
       }
 
       // 8. Kori Natural Language Analytics v0 Phase 1 — best-effort projection
-      // of LeadCommercialProfile from the newest available commercial facts.
-      // Only attempted after a successful analysis run (no point projecting
-      // off a stale/absent snapshot otherwise) — but the projection itself
-      // independently reads the latest snapshot rather than depending on
-      // this turn's specific output, so it's safe even when nothing changed.
+      // of LeadCommercialProfile. Deliberately NOT gated on analysisTriggered:
+      // projectLeadCommercialProfile's tier-3 deterministic extraction
+      // (server/intelligence/lead-commercial-state) works entirely from
+      // ConversationEntry rows, never requires a ConversationSnapshot to
+      // exist, and must keep working when the AI provider is unavailable or
+      // unconfigured — see LeadCommercialProfile's schema doc comment on the
+      // precedence tiers. Always attempted, independent of step 7's outcome.
       let profileProjected = false;
       let profileProjectionError: unknown;
-      if (analysisTriggered) {
-        try {
-          await deps.projectCommercialProfile(phoneNumber.businessId, lead.id);
-          profileProjected = true;
-        } catch (error) {
-          profileProjectionError = error;
-        }
+      try {
+        await deps.projectCommercialProfile(phoneNumber.businessId, lead.id);
+        profileProjected = true;
+      } catch (error) {
+        profileProjectionError = error;
+        logPipelineStepFailure("commercial_profile_projection", error, {
+          businessId: phoneNumber.businessId,
+          leadId: lead.id,
+          conversationId: conversation.id,
+        });
       }
 
       return {

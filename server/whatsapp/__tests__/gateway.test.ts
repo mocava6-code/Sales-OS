@@ -214,7 +214,7 @@ describe("WhatsAppGateway.handleInboundMessage — 7. orchestration trigger", ()
 });
 
 describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Analytics v0 Phase 1 commercial-profile projection", () => {
-  it("calls projectCommercialProfile with the resolved businessId/leadId only after analysis succeeds", async () => {
+  it("1. calls projectCommercialProfile with the resolved businessId/leadId when analysis succeeds", async () => {
     const { deps, projectCommercialProfile } = createFakeGatewayDeps({
       phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
     });
@@ -222,13 +222,14 @@ describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Anal
 
     const result = await gateway.handleInboundMessage(textMessage());
 
+    expect(result.analysisTriggered).toBe(true);
     expect(projectCommercialProfile).toHaveBeenCalledTimes(1);
     expect(projectCommercialProfile).toHaveBeenCalledWith("biz-1", result.leadId);
     expect(result.profileProjected).toBe(true);
     expect(result.profileProjectionError).toBeUndefined();
   });
 
-  it("does not call projectCommercialProfile when analysis fails", async () => {
+  it("2. still calls projectCommercialProfile when analysis fails — deterministic extraction must not depend on AI", async () => {
     const failingRunAnalysis = vi.fn(async () => {
       throw new Error("AI provider unavailable");
     });
@@ -240,12 +241,37 @@ describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Anal
 
     const result = await gateway.handleInboundMessage(textMessage());
 
-    expect(projectCommercialProfile).not.toHaveBeenCalled();
-    expect(result.profileProjected).toBe(false);
-    expect(result.profileProjectionError).toBeUndefined();
+    expect(result.analysisTriggered).toBe(false);
+    expect(result.analysisError).toBeInstanceOf(Error);
+    expect(projectCommercialProfile).toHaveBeenCalledTimes(1);
+    expect(projectCommercialProfile).toHaveBeenCalledWith("biz-1", result.leadId);
+    expect(result.profileProjected).toBe(true);
   });
 
-  it("swallows a projection failure — never throws, message/entry are still persisted, result still returns normally", async () => {
+  it("3. still calls projectCommercialProfile when the AI provider is not configured — the exact production failure mode", async () => {
+    const unconfiguredRunAnalysis = vi.fn(async () => {
+      throw new Error("AI_PROVIDER is not configured. Set it in your environment (see .env.example).");
+    });
+    const { deps, store, projectCommercialProfile } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      runAnalysisImpl: unconfiguredRunAnalysis,
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    // Message persistence is the critical path — unaffected either way.
+    expect(result.duplicate).toBe(false);
+    expect(result.entryId).toBeDefined();
+    expect(store.entries.size).toBe(1);
+    // Analysis genuinely failed...
+    expect(result.analysisTriggered).toBe(false);
+    // ...but projection still ran regardless.
+    expect(projectCommercialProfile).toHaveBeenCalledTimes(1);
+    expect(result.profileProjected).toBe(true);
+  });
+
+  it("4. swallows a projection failure — never throws, message/entry are still persisted, result still returns normally", async () => {
     const failingProjection = vi.fn(async () => {
       throw new Error("projection unavailable");
     });
@@ -263,6 +289,60 @@ describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Anal
     expect(result.analysisTriggered).toBe(true);
     expect(result.profileProjected).toBe(false);
     expect(result.profileProjectionError).toBeInstanceOf(Error);
+  });
+
+  it("logs a sanitized, structured failure for a projection error — no message content in the log payload", async () => {
+    const failingProjection = vi.fn(async () => {
+      throw new Error("connection to database failed");
+    });
+    const { deps } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      projectCommercialProfileImpl: failingProjection,
+    });
+    const gateway = createWhatsAppGateway(deps);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await gateway.handleInboundMessage(textMessage({ content: "secret customer content that must never be logged" }));
+
+    const call = consoleErrorSpy.mock.calls.find((c) => c[1]?.stage === "commercial_profile_projection");
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({
+      businessId: "biz-1",
+      leadId: result.leadId,
+      conversationId: result.conversationId,
+      stage: "commercial_profile_projection",
+      errorCode: "Error",
+      errorMessage: "connection to database failed",
+    });
+    const logged = JSON.stringify(call);
+    expect(logged).not.toContain("secret customer content");
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("logs a sanitized, structured failure for an analysis error", async () => {
+    const failingRunAnalysis = vi.fn(async () => {
+      throw new Error("AI_PROVIDER is not configured. Set it in your environment (see .env.example).");
+    });
+    const { deps } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+      runAnalysisImpl: failingRunAnalysis,
+    });
+    const gateway = createWhatsAppGateway(deps);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await gateway.handleInboundMessage(textMessage());
+
+    const call = consoleErrorSpy.mock.calls.find((c) => c[1]?.stage === "analysis");
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({
+      businessId: "biz-1",
+      leadId: result.leadId,
+      conversationId: result.conversationId,
+      stage: "analysis",
+      errorCode: "Error",
+      errorMessage: "AI_PROVIDER is not configured. Set it in your environment (see .env.example).",
+    });
+    consoleErrorSpy.mockRestore();
   });
 });
 

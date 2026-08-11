@@ -197,4 +197,31 @@ describe.skipIf(!shouldRunDbTests)("lead-commercial-profile-service (RUN_DB_TEST
       await db!.lead.delete({ where: { id: bareLead.id } });
     }
   });
+
+  it("deterministic extraction alone creates a profile when NO ConversationSnapshot exists — the AI-unavailable production scenario", async () => {
+    // No createSnapshot call anywhere in this test — proves tier 3
+    // (server/intelligence/lead-commercial-state) works entirely from
+    // ConversationEntry rows, independent of the LLM engine ever running.
+    await db!.conversationEntry.create({
+      data: {
+        conversationId: fixture.conversationId,
+        direction: "INBOUND",
+        content: "Hola, tengo una Hilux 2022 y quiero comprar el body kit TRAVO. ¿Cuánto cuesta?",
+        occurredAt: new Date(),
+      },
+    });
+
+    const snapshotCountBefore = await db!.conversationSnapshot.count({ where: { conversationId: fixture.conversationId } });
+    expect(snapshotCountBefore).toBe(0);
+
+    const result = await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+    expect(result).toEqual({ created: true, updated: false, skipped: false });
+
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
+    expect(profile?.vehicleModel).toContain("Hilux");
+    // createTestFixture's conversation defaults to status NEEDS_REPLY —
+    // nextAction resolves from that alone, no entries required for it specifically.
+    expect(profile?.nextAction).toBe("ANSWER_QUESTION");
+    expect((profile?.provenance as never as { vehicleModel: { source: string } }).vehicleModel.source).toBe("LEAD_COMMERCIAL_STATE");
+  });
 });

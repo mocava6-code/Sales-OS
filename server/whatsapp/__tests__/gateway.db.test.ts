@@ -110,6 +110,47 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
     expect(profile?.vehicleModel).toContain("Hilux");
   });
 
+  it("8. Kori Natural Language Analytics v0 robustness fix: profile projection runs and persists even when the AI provider is not configured — the exact production root cause reproduced end to end", async () => {
+    const unconfiguredRunAnalysis = async () => {
+      throw new Error("AI_PROVIDER is not configured. Set it in your environment (see .env.example).");
+    };
+    const gateway = createWhatsAppGateway({ runAnalysis: unconfiguredRunAnalysis }, db!);
+
+    const message: NormalizedWhatsAppMessage = {
+      externalId: `wamid.NOAI-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      fromPhoneNumber: "16315557766",
+      messageType: "TEXT",
+      content: "Hola, tengo una Toyota Hilux 2022 y quiero comprar el body kit TRAVO. ¿Cuánto cuesta?",
+      occurredAt: new Date(),
+      raw: {},
+    };
+
+    const result = await gateway.handleInboundMessage(message);
+
+    // Message persistence — the critical path — is entirely unaffected.
+    expect(result.duplicate).toBe(false);
+    const entry = await db!.conversationEntry.findUnique({ where: { externalId: message.externalId } });
+    expect(entry).not.toBeNull();
+
+    // Analysis genuinely failed, exactly as it does in production today...
+    expect(result.analysisTriggered).toBe(false);
+    expect(result.analysisError).toBeInstanceOf(Error);
+    expect((result.analysisError as Error).message).toContain("AI_PROVIDER is not configured");
+    // No ConversationSnapshot was ever created — analysis never reached that point.
+    const snapshots = await db!.conversationSnapshot.findMany({ where: { conversationId: result.conversationId! } });
+    expect(snapshots).toHaveLength(0);
+
+    // ...but the commercial profile is still projected via tier-3 deterministic
+    // extraction alone, and actually persisted to production-shaped data.
+    expect(result.profileProjected).toBe(true);
+    expect(result.profileProjectionError).toBeUndefined();
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: result.leadId! } });
+    expect(profile).not.toBeNull();
+    expect(profile?.vehicleModel).toContain("Hilux");
+    expect(profile?.productInterest).toBeTruthy();
+  });
+
   it("4. duplicate detection: a re-delivered wamid is safely skipped at the database level", async () => {
     const gateway = createWhatsAppGateway({ runAnalysis: makeRunAnalysis(db!) }, db!);
     const message: NormalizedWhatsAppMessage = {
