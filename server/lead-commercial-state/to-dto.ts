@@ -18,6 +18,8 @@ export function toLeadCommercialStateDTO(state: LeadCommercialState): LeadCommer
   return {
     productInterest: toFieldDisplayDTO(state.productInterest, identity),
     vehicleModel: toFieldDisplayDTO(state.vehicleModel, identity),
+    vehicleBrand: toFieldDisplayDTO(state.vehicleBrand, identity),
+    vehicleYear: toFieldDisplayDTO(state.vehicleYear, identity),
     deliveryLocation: toFieldDisplayDTO(state.deliveryLocation, identity),
     requestedDeliveryAt: toFieldDisplayDTO(state.requestedDeliveryAt, toIso),
     paymentStatus: toFieldDisplayDTO(state.paymentStatus, identity),

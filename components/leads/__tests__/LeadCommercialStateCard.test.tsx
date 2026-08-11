@@ -8,6 +8,8 @@ function workedExampleState(): LeadCommercialStateDTO {
   return {
     productInterest: { value: "Hilux TRAVO 2026 kit", confidence: 0.6, evidenceExcerpt: "tiene kit de hilux travo 2026?", reasoning: null },
     vehicleModel: { value: "Hilux TRAVO 2026", confidence: 0.6, evidenceExcerpt: "tiene kit de hilux travo 2026?", reasoning: null },
+    vehicleBrand: { value: "Toyota", confidence: 0.6, evidenceExcerpt: "tiene kit de hilux travo 2026?", reasoning: null },
+    vehicleYear: { value: 2026, confidence: 0.6, evidenceExcerpt: "tiene kit de hilux travo 2026?", reasoning: null },
     deliveryLocation: { value: "Chaclacayo", confidence: 0.85, evidenceExcerpt: "hace envíos a chaclacayo?", reasoning: "Matched against a known Peru district/city gazetteer." },
     requestedDeliveryAt: { value: "2026-07-25T17:00:00.000Z", confidence: 0.75, evidenceExcerpt: "para manana a las 12", reasoning: null },
     paymentStatus: { value: "AWAITING_PAYMENT", confidence: 0.85, evidenceExcerpt: "ok aqui le paso el numero de cuenta para que realice el pago", reasoning: null },

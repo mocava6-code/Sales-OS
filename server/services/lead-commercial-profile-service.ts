@@ -153,13 +153,26 @@ export async function computeLeadCommercialProfileUpdate(
   }
 
   if (snapshot) {
-    apply("vehicleBrand", buildTier2Candidate(snapshot.result.facts.vehicleBrand, snapshot.id), null);
+    apply(
+      "vehicleBrand",
+      buildTier2Candidate(snapshot.result.facts.vehicleBrand, snapshot.id),
+      // Kori Data Correctness Phase 1C — deterministic brand inference now
+      // contributes here too (previously always null). resolveField's own
+      // confidence comparison is what stops this from ever overwriting a
+      // higher-confidence AI/human value already stored — no new guard
+      // needed, this is the exact mechanism the plan reasoned it would be.
+      buildTier3Candidate({ value: dto.vehicleBrand.value, confidence: dto.vehicleBrand.confidence, reasoning: dto.vehicleBrand.reasoning }),
+    );
     apply(
       "vehicleModel",
       buildTier2Candidate(snapshot.result.facts.vehicleModel, snapshot.id),
       buildTier3Candidate({ value: dto.vehicleModel.value, confidence: dto.vehicleModel.confidence, reasoning: dto.vehicleModel.reasoning }),
     );
-    apply("vehicleYear", buildTier2Candidate(snapshot.result.facts.vehicleYear, snapshot.id), null);
+    apply(
+      "vehicleYear",
+      buildTier2Candidate(snapshot.result.facts.vehicleYear, snapshot.id),
+      buildTier3Candidate({ value: dto.vehicleYear.value, confidence: dto.vehicleYear.confidence, reasoning: dto.vehicleYear.reasoning }),
+    );
     apply(
       "productInterest",
       buildTier2Candidate(snapshot.result.facts.productRequested, snapshot.id),
@@ -176,11 +189,21 @@ export async function computeLeadCommercialProfileUpdate(
       null,
     );
   } else {
-    // No snapshot yet — tier 3 still contributes to the two overlapping fields.
+    // No snapshot yet — tier 3 still contributes to all four overlapping fields.
+    apply(
+      "vehicleBrand",
+      null,
+      buildTier3Candidate({ value: dto.vehicleBrand.value, confidence: dto.vehicleBrand.confidence, reasoning: dto.vehicleBrand.reasoning }),
+    );
     apply(
       "vehicleModel",
       null,
       buildTier3Candidate({ value: dto.vehicleModel.value, confidence: dto.vehicleModel.confidence, reasoning: dto.vehicleModel.reasoning }),
+    );
+    apply(
+      "vehicleYear",
+      null,
+      buildTier3Candidate({ value: dto.vehicleYear.value, confidence: dto.vehicleYear.confidence, reasoning: dto.vehicleYear.reasoning }),
     );
     apply(
       "productInterest",

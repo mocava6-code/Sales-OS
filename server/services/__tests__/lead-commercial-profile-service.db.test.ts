@@ -218,10 +218,44 @@ describe.skipIf(!shouldRunDbTests)("lead-commercial-profile-service (RUN_DB_TEST
     expect(result).toEqual({ created: true, updated: false, skipped: false });
 
     const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
-    expect(profile?.vehicleModel).toContain("Hilux");
+    expect(profile?.vehicleModel).toBe("Hilux");
+    // Kori Data Correctness Phase 1C — vehicleBrand/vehicleYear are now
+    // also deterministically populated in this exact AI-unavailable
+    // scenario, previously always null with no tier-3 fallback at all.
+    expect(profile?.vehicleBrand).toBe("Toyota");
+    expect(profile?.vehicleYear).toBe(2022);
+    expect(profile?.productInterest).toBe("TRAVO kit");
     // createTestFixture's conversation defaults to status NEEDS_REPLY —
     // nextAction resolves from that alone, no entries required for it specifically.
     expect(profile?.nextAction).toBe("ANSWER_QUESTION");
     expect((profile?.provenance as never as { vehicleModel: { source: string } }).vehicleModel.source).toBe("LEAD_COMMERCIAL_STATE");
+    expect((profile?.provenance as never as { vehicleBrand: { source: string } }).vehicleBrand.source).toBe("LEAD_COMMERCIAL_STATE");
+  });
+
+  it("Kori Data Correctness Phase 1C — deterministic vehicleBrand NEVER overwrites a higher-confidence AI-derived vehicleBrand already stored", async () => {
+    // A higher-confidence AI snapshot already set vehicleBrand — same
+    // precedence mechanism proven generically above for the pre-existing
+    // vehicleBrand field, now exercised specifically against the NEW
+    // deterministic tier-3 source this phase adds.
+    await createSnapshot(db!, fixture, { facts: { vehicleBrand: fact("Suzuki", 0.9) } });
+    await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+
+    // A message a human would read as "Ford Ranger" — the deterministic
+    // extractor would resolve vehicleBrand="Ford" at confidence 0.6, well
+    // below the existing 0.9 — must be rejected, not silently applied.
+    await db!.conversationEntry.create({
+      data: { conversationId: fixture.conversationId, direction: "INBOUND", content: "tienen para mi ranger?", occurredAt: new Date() },
+    });
+
+    const result = await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
+    expect(profile?.vehicleBrand).toBe("Suzuki");
+    expect((profile?.provenance as never as { vehicleBrand: { source: string } }).vehicleBrand.source).toBe("CONVERSATION_SNAPSHOT");
+    // vehicleModel has no existing value yet, so the deterministic
+    // candidate for THAT field is still accepted — only vehicleBrand's
+    // pre-existing higher-confidence value blocks an overwrite.
+    expect(result.updated).toBe(true);
+    expect(profile?.vehicleModel).toBe("Ranger");
   });
 });

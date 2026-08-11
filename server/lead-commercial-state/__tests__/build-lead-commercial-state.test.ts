@@ -28,8 +28,12 @@ describe("buildLeadCommercialState — worked example, through the read-model la
   it("produces a fully-populated, JSON-safe DTO matching the Sprint 7 spec", () => {
     const dto = buildLeadCommercialState(workedExampleLead(), "America/Lima");
 
-    expect(dto.productInterest.value).toBe("Hilux TRAVO 2026 kit");
-    expect(dto.vehicleModel.value).toBe("Hilux TRAVO 2026");
+    // Kori Data Correctness Phase 1C — brand/model/year/product are now
+    // separate fields instead of one compound vehicleModel string.
+    expect(dto.productInterest.value).toBe("TRAVO kit");
+    expect(dto.vehicleModel.value).toBe("Hilux");
+    expect(dto.vehicleBrand.value).toBe("Toyota");
+    expect(dto.vehicleYear.value).toBe(2026);
     expect(dto.deliveryLocation.value).toBe("Chaclacayo");
     expect(dto.requestedDeliveryAt.value).toBe("2026-07-25T17:00:00.000Z");
     expect(dto.paymentStatus.value).toBe("AWAITING_PAYMENT");

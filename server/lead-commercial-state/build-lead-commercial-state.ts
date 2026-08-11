@@ -10,7 +10,12 @@ import {
   deriveLeadCommercialState,
   type LeadCommercialStateDependencies,
 } from "../intelligence/lead-commercial-state/derive-lead-commercial-state";
-import { productInterestExtractor, vehicleModelExtractor } from "../intelligence/lead-commercial-state/extractors/freetext-product-extractor";
+import {
+  productInterestExtractor,
+  vehicleBrandExtractor,
+  vehicleModelExtractor,
+  vehicleYearExtractor,
+} from "../intelligence/lead-commercial-state/extractors/freetext-product-extractor";
 import { deliveryLocationExtractor } from "../intelligence/lead-commercial-state/extractors/location-extractor";
 import { paymentStatusExtractor } from "../intelligence/lead-commercial-state/extractors/payment-extractor";
 import { createRequestedDeliveryAtExtractor } from "../intelligence/lead-commercial-state/extractors/relative-date-extractor";
@@ -47,6 +52,8 @@ function buildDefaultDependencies(businessTimezone: string): LeadCommercialState
   return {
     productInterestExtractors: [productInterestExtractor],
     vehicleModelExtractors: [vehicleModelExtractor],
+    vehicleBrandExtractors: [vehicleBrandExtractor],
+    vehicleYearExtractors: [vehicleYearExtractor],
     locationExtractors: [deliveryLocationExtractor],
     dateExtractors: [createRequestedDeliveryAtExtractor(businessTimezone)],
     paymentExtractors: [paymentStatusExtractor],

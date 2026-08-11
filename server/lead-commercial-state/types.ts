@@ -21,6 +21,10 @@ export interface FieldDisplayDTO<T> {
 export interface LeadCommercialStateDTO {
   productInterest: FieldDisplayDTO<string>;
   vehicleModel: FieldDisplayDTO<string>;
+  /** Kori Data Correctness Phase 1C. */
+  vehicleBrand: FieldDisplayDTO<string>;
+  /** Kori Data Correctness Phase 1C. */
+  vehicleYear: FieldDisplayDTO<number>;
   deliveryLocation: FieldDisplayDTO<string>;
   /** ISO string when present. */
   requestedDeliveryAt: FieldDisplayDTO<string>;

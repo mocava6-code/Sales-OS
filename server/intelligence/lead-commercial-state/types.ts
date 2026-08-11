@@ -110,6 +110,10 @@ export interface LeadCommercialStateMetadata {
 export interface LeadCommercialState {
   productInterest: Fact<string>;
   vehicleModel: Fact<string>;
+  /** Kori Data Correctness Phase 1C — deterministic brand inference from the recognized vehicle model (e.g. Hilux -> Toyota); see extractors/freetext-product-extractor.ts's KNOWN_VEHICLE_MODEL_TO_BRAND. */
+  vehicleBrand: Fact<string>;
+  /** Kori Data Correctness Phase 1C — a 4-digit year token found alongside a recognized vehicle model. */
+  vehicleYear: Fact<number>;
   deliveryLocation: Fact<string>;
   requestedDeliveryAt: Fact<Date>;
   paymentStatus: Inference<PaymentStatus>;

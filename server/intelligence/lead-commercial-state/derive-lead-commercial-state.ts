@@ -26,6 +26,10 @@ import {
 export interface LeadCommercialStateDependencies {
   productInterestExtractors: FieldExtractor<string>[];
   vehicleModelExtractors: FieldExtractor<string>[];
+  /** Kori Data Correctness Phase 1C. */
+  vehicleBrandExtractors: FieldExtractor<string>[];
+  /** Kori Data Correctness Phase 1C. */
+  vehicleYearExtractors: FieldExtractor<number>[];
   locationExtractors: FieldExtractor<string>[];
   dateExtractors: FieldExtractor<Date>[];
   paymentExtractors: FieldExtractor<PaymentStatus>[];
@@ -47,6 +51,8 @@ function buildExtractorVersionMap(dependencies: LeadCommercialStateDependencies)
   const all = [
     ...dependencies.productInterestExtractors,
     ...dependencies.vehicleModelExtractors,
+    ...dependencies.vehicleBrandExtractors,
+    ...dependencies.vehicleYearExtractors,
     ...dependencies.locationExtractors,
     ...dependencies.dateExtractors,
     ...dependencies.paymentExtractors,
@@ -83,6 +89,18 @@ export function deriveLeadCommercialState(
   const vehicleModel = toFact(
     foldMutableFieldCandidates(
       dependencies.vehicleModelExtractors.flatMap((e) => e.extract(messages)),
+      activeContext.activeConversationId,
+    ),
+  );
+  const vehicleBrand = toFact(
+    foldMutableFieldCandidates(
+      dependencies.vehicleBrandExtractors.flatMap((e) => e.extract(messages)),
+      activeContext.activeConversationId,
+    ),
+  );
+  const vehicleYear = toFact(
+    foldMutableFieldCandidates(
+      dependencies.vehicleYearExtractors.flatMap((e) => e.extract(messages)),
       activeContext.activeConversationId,
     ),
   );
@@ -132,6 +150,8 @@ export function deriveLeadCommercialState(
   return {
     productInterest,
     vehicleModel,
+    vehicleBrand,
+    vehicleYear,
     deliveryLocation,
     requestedDeliveryAt,
     paymentStatus,

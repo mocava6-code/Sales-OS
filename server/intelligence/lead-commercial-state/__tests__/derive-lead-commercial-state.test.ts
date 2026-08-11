@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveLeadCommercialState, type LeadCommercialStateDependencies } from "../derive-lead-commercial-state";
 import { createRequestedDeliveryAtExtractor } from "../extractors/relative-date-extractor";
-import { productInterestExtractor, vehicleModelExtractor } from "../extractors/freetext-product-extractor";
+import { productInterestExtractor, vehicleBrandExtractor, vehicleModelExtractor, vehicleYearExtractor } from "../extractors/freetext-product-extractor";
 import { deliveryLocationExtractor } from "../extractors/location-extractor";
 import { paymentStatusExtractor } from "../extractors/payment-extractor";
 import type { ConversationSummaryForActiveResolution, NormalizedMessageForExtraction } from "../types";
@@ -12,6 +12,8 @@ function buildDependencies(): LeadCommercialStateDependencies {
   return {
     productInterestExtractors: [productInterestExtractor],
     vehicleModelExtractors: [vehicleModelExtractor],
+    vehicleBrandExtractors: [vehicleBrandExtractor],
+    vehicleYearExtractors: [vehicleYearExtractor],
     locationExtractors: [deliveryLocationExtractor],
     dateExtractors: [createRequestedDeliveryAtExtractor(LIMA)],
     paymentExtractors: [paymentStatusExtractor],
@@ -49,8 +51,13 @@ describe("deriveLeadCommercialState — worked example, end to end", () => {
   it("produces every field exactly as specified in the Sprint 7 spec", () => {
     const state = deriveLeadCommercialState("lead-1", workedExampleMessages(), workedExampleConversations(), buildDependencies());
 
-    expect(state.productInterest.value).toBe("Hilux TRAVO 2026 kit");
-    expect(state.vehicleModel.value).toBe("Hilux TRAVO 2026");
+    // Kori Data Correctness Phase 1C — vehicleModel/productInterest no
+    // longer carry the compound "Hilux TRAVO 2026" string; brand/model/year
+    // are now separated, with productInterest holding just the product line.
+    expect(state.productInterest.value).toBe("TRAVO kit");
+    expect(state.vehicleModel.value).toBe("Hilux");
+    expect(state.vehicleBrand.value).toBe("Toyota");
+    expect(state.vehicleYear.value).toBe(2026);
     expect(state.deliveryLocation.value).toBe("Chaclacayo");
     expect(state.requestedDeliveryAt.value?.toISOString()).toBe("2026-07-25T17:00:00.000Z"); // tomorrow noon, Lima -> UTC
     expect(state.paymentStatus.value).toBe("AWAITING_PAYMENT");
@@ -104,7 +111,7 @@ describe("deriveLeadCommercialState — multi-conversation precedence", () => {
       buildDependencies(),
     );
 
-    expect(state.productInterest.value).toBe("Hilux TRAVO 2026 kit");
+    expect(state.productInterest.value).toBe("TRAVO kit");
     expect(state.metadata.activeConversationId).toBe("conv-1");
   });
 });
