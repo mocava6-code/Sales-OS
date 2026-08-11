@@ -64,6 +64,33 @@ const SORT_PROPERTIES = {
   direction: { type: ["string", "null"], enum: ["asc", "desc", null] },
 } as const;
 
+// `sort` is a genuinely optional NESTED OBJECT (KoriQuerySpec's sort is
+// `.optional()`, unlike `filters` which the prompt always populates as an
+// object even when every filter is unused — see FILTERS_PROPERTIES above,
+// left as a plain always-present object per that distinction). A plain
+// `type: "object"` declaration forces the model to always emit an object
+// and rejects `null` — confirmed against a real production generation
+// failure ("'/sort' expected object, but got null") once the model
+// legitimately had nothing to sort by. A bare `type: ["object", "null"]`
+// alongside object-only keywords (properties/required/additionalProperties)
+// is ambiguous for strict-mode compilers; `anyOf` with an explicit
+// `{type: "null"}` branch is the documented, unambiguous way to make an
+// object nullable in OpenAI-compatible strict structured outputs, which
+// Groq mirrors for openai/gpt-oss models. If any other nested object is
+// ever added to this schema and is similarly optional, it must use this
+// same anyOf-with-null-branch shape, not a plain "object" type.
+const NULLABLE_SORT_SCHEMA = {
+  anyOf: [
+    {
+      type: "object",
+      properties: SORT_PROPERTIES,
+      required: Object.keys(SORT_PROPERTIES),
+      additionalProperties: false,
+    },
+    { type: "null" },
+  ],
+};
+
 /**
  * The schema sent to Groq in response_format: {type: "json_schema", ...,
  * strict: true}. Every object has additionalProperties: false; every key
@@ -85,12 +112,7 @@ export function buildKoriGroqTransportJsonSchema(): GroqJsonSchema {
           additionalProperties: false,
         },
         groupBy: nullableEnum(KORI_GROUP_BY_FIELDS),
-        sort: {
-          type: "object",
-          properties: SORT_PROPERTIES,
-          required: Object.keys(SORT_PROPERTIES),
-          additionalProperties: false,
-        },
+        sort: NULLABLE_SORT_SCHEMA,
         limit: NULLABLE_INTEGER,
       },
       required: ["unsupported", "operation", "filters", "groupBy", "sort", "limit"],

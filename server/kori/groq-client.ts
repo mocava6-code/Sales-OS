@@ -20,7 +20,7 @@
 // adapter small and dependency-free, same spirit as the Anthropic
 // adapter's narrow surface (server/intelligence/providers/anthropic-ai-provider.ts).
 
-import { KoriAIConfigurationError, KoriNaturalLanguageParseError } from "./errors";
+import { KoriAIConfigurationError, KoriNaturalLanguageParseError, KoriProviderRateLimitedError } from "./errors";
 
 const GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MAX_TOKENS = 1024;
@@ -141,6 +141,14 @@ function createRealSendMessage(config: GroqClientConfig): GroqSendMessage {
       // safe to carry as `cause` for diagnostics. Truncated defensively;
       // never includes the Authorization header or apiKey.
       const sanitizedBody = bodyText.slice(0, MAX_ERROR_BODY_LENGTH);
+      // 429 (rate limiting, e.g. the free-tier TPM cap) is not a
+      // request/response-shape problem and says nothing about the
+      // question's validity — kept as its own error type so callers can
+      // tell "Groq is throttling us" apart from both a real parse failure
+      // and "this question isn't supported."
+      if (response.status === 429) {
+        throw new KoriProviderRateLimitedError("Groq rate limit exceeded (429).", sanitizedBody || undefined);
+      }
       throw new KoriNaturalLanguageParseError(`Groq request failed with status ${response.status}.`, sanitizedBody || undefined);
     }
 

@@ -3,39 +3,64 @@ import { parseKoriQuerySpec } from "../query-spec";
 import { UnsupportedKoriQuestionError } from "../errors";
 import { buildKoriGroqTransportJsonSchema, transportToKoriQuerySpecJson } from "../groq-transport-schema";
 
-// Regression coverage for a real production Groq 400: openai/gpt-oss-20b's
-// strict json_schema mode rejected the previous schema because `filters`
-// and `sort` declared properties that weren't also listed in `required`
-// (confirmed via the sanitized Groq error body: "/properties/sort/required
-// missing: direction, field", "/properties/filters/required missing all
-// filter properties"). These tests assert the two rules Groq's strict mode
-// actually enforces, at every nesting level, so this can't regress silently.
+// Regression coverage for two real production Groq failures against
+// openai/gpt-oss-20b's strict json_schema mode:
+//
+// 1. A 400 at schema-validation time because `filters`/`sort` declared
+//    properties that weren't also listed in `required` (sanitized Groq
+//    error body: "/properties/sort/required missing: direction, field",
+//    "/properties/filters/required missing all filter properties").
+// 2. A generation-time failure ("'/sort' expected object, but got null")
+//    once the schema itself validated but the model legitimately had no
+//    sort to express — `sort` was declared as a plain `type: "object"`,
+//    which forbids `null` outright. Fixed with `anyOf: [<object>, {type:
+//    "null"}]`, the documented way to make an object nullable in strict
+//    structured outputs.
+//
+// These tests assert both rules — required-lists-every-property, and
+// optional NESTED OBJECTS specifically (not just their scalar fields) are
+// null-representable — at every level of the schema, so neither can
+// regress silently.
 
 interface SchemaObjectNode {
   path: string;
   node: { type?: unknown; properties?: Record<string, unknown>; required?: unknown; additionalProperties?: unknown };
 }
 
+/** Walks `properties` at every level, descending into `anyOf` branches too (that's where a nullable object's real shape lives). */
 function collectObjectNodes(node: unknown, path: string, acc: SchemaObjectNode[] = []): SchemaObjectNode[] {
   if (typeof node !== "object" || node === null || Array.isArray(node)) {
     return acc;
   }
-  const typed = node as SchemaObjectNode["node"];
+  const typed = node as SchemaObjectNode["node"] & { anyOf?: unknown[] };
+
   if (typed.type === "object" && typed.properties) {
     acc.push({ path, node: typed });
     for (const [key, child] of Object.entries(typed.properties)) {
       collectObjectNodes(child, `${path}.${key}`, acc);
     }
   }
+
+  if (Array.isArray(typed.anyOf)) {
+    typed.anyOf.forEach((branch, i) => collectObjectNodes(branch, `${path}[anyOf:${i}]`, acc));
+  }
+
   return acc;
+}
+
+function findSchemaNode(node: unknown, path: readonly string[]): unknown {
+  return path.reduce<unknown>((current, key) => {
+    if (typeof current !== "object" || current === null) return undefined;
+    return (current as Record<string, unknown>)[key];
+  }, node);
 }
 
 describe("buildKoriGroqTransportJsonSchema — Groq strict json_schema compliance", () => {
   const groqSchema = buildKoriGroqTransportJsonSchema();
   const objectNodes = collectObjectNodes(groqSchema.schema, "root");
 
-  it("finds the root, filters, and sort object nodes (sanity check that the walk actually covers the schema)", () => {
-    expect(objectNodes.map((n) => n.path)).toEqual(["root", "root.filters", "root.sort"]);
+  it("finds the root, filters, and sort's anyOf object-branch nodes (sanity check that the walk actually covers the schema)", () => {
+    expect(objectNodes.map((n) => n.path)).toEqual(["root", "root.filters", "root.sort[anyOf:0]"]);
   });
 
   it.each(objectNodes.map((n) => [n.path, n] as const))("%s has additionalProperties: false", (_path, { node }) => {
@@ -43,7 +68,7 @@ describe("buildKoriGroqTransportJsonSchema — Groq strict json_schema complianc
   });
 
   it.each(objectNodes.map((n) => [n.path, n] as const))(
-    "%s lists every declared property in `required` — the exact rule the production 400 violated",
+    "%s lists every declared property in `required` — the rule the first production 400 violated",
     (_path, { node }) => {
       const propertyKeys = Object.keys(node.properties ?? {});
       expect(Array.isArray(node.required)).toBe(true);
@@ -51,17 +76,48 @@ describe("buildKoriGroqTransportJsonSchema — Groq strict json_schema complianc
     },
   );
 
-  it("marks every property other than `unsupported` as nullable (type includes null, enum includes null if present)", () => {
+  it("marks every optional property as nullable: scalars via a `null` type/enum member, nested objects (sort) via an anyOf null branch", () => {
     for (const { path, node } of objectNodes) {
       for (const [key, rawChild] of Object.entries(node.properties ?? {})) {
-        const child = rawChild as { type?: unknown; enum?: unknown[] };
+        const child = rawChild as { type?: unknown; enum?: unknown[]; anyOf?: unknown[] };
         if (path === "root" && key === "unsupported") continue; // the one genuinely non-nullable field
-        if (child.type === "object") continue; // nested objects (filters/sort) are always-present containers, not nullable themselves
+
+        if (Array.isArray(child.anyOf)) {
+          const hasNullBranch = child.anyOf.some((b) => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "null");
+          expect(hasNullBranch, `${path}.${key}'s anyOf should include a {type: "null"} branch`).toBe(true);
+          continue;
+        }
+        if (child.type === "object") continue; // filters: always-present container by design (not nullable itself, per audit — only its own properties are)
         expect(Array.isArray(child.type) && (child.type as string[]).includes("null"), `${path}.${key} should be nullable`).toBe(true);
         if (Array.isArray(child.enum)) {
           expect(child.enum, `${path}.${key} enum should include null`).toContain(null);
         }
       }
+    }
+  });
+
+  it("sort is nullable via anyOf: [<object schema>, {type: 'null'}] — the second production failure ('/sort' expected object, but got null)", () => {
+    const sortNode = findSchemaNode(groqSchema.schema, ["properties", "sort"]) as { anyOf?: unknown[] };
+    expect(Array.isArray(sortNode.anyOf)).toBe(true);
+    expect(sortNode.anyOf).toHaveLength(2);
+    expect(sortNode.anyOf?.[1]).toEqual({ type: "null" });
+    const objectBranch = sortNode.anyOf?.[0] as { type?: unknown; additionalProperties?: unknown; required?: unknown };
+    expect(objectBranch.type).toBe("object");
+    expect(objectBranch.additionalProperties).toBe(false);
+    expect(objectBranch.required).toEqual(["field", "direction"]);
+  });
+
+  it("audit: filters is the only other nested object, and is deliberately NOT nullable (the prompt always sends it as an object) — confirms no other optional-nested-object gaps exist", () => {
+    const filtersNode = findSchemaNode(groqSchema.schema, ["properties", "filters"]) as { type?: unknown; anyOf?: unknown };
+    expect(filtersNode.type).toBe("object");
+    expect(filtersNode.anyOf).toBeUndefined();
+    // No nested object schema exists anywhere else in the tree besides filters/sort.
+    const rootProperties = (groqSchema.schema as { properties: Record<string, unknown> }).properties;
+    for (const [key, value] of Object.entries(rootProperties)) {
+      if (key === "filters" || key === "sort") continue;
+      expect(typeof value === "object" && value !== null && (value as { type?: unknown }).type === "object", `${key} unexpectedly nested-object`).toBe(
+        false,
+      );
     }
   });
 
@@ -177,5 +233,40 @@ describe("transportToKoriQuerySpecJson", () => {
   it("passes through non-object input unchanged", () => {
     expect(transportToKoriQuerySpecJson(null)).toBeNull();
     expect(transportToKoriQuerySpecJson("not an object")).toBe("not an object");
+  });
+
+  it("regression: the exact real production generation for '¿Cuántos clientes necesitan respuesta?' (sort literally null, not an object)", () => {
+    const productionGeneration = {
+      unsupported: false,
+      operation: "COUNT_LEADS",
+      filters: {
+        vehicleBrand: null,
+        vehicleModel: null,
+        vehicleYear: null,
+        productInterest: null,
+        customerType: null,
+        needsReply: true,
+        overdueFollowUp: null,
+        leadStatus: null,
+        priority: null,
+        assignedAgentId: null,
+        createdFrom: null,
+        createdTo: null,
+        lastActivityBefore: null,
+        lastActivityAfter: null,
+        outcomeType: null,
+      },
+      groupBy: null,
+      sort: null,
+      limit: null,
+    };
+
+    const loose = transportToKoriQuerySpecJson(productionGeneration);
+    expect(loose).toEqual({ operation: "COUNT_LEADS", filters: { needsReply: true } });
+
+    const spec = parseKoriQuerySpec(loose);
+    expect(spec.operation).toBe("COUNT_LEADS");
+    expect(spec.filters).toEqual({ needsReply: true });
+    expect(spec.sort).toBeUndefined();
   });
 });

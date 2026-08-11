@@ -74,3 +74,23 @@ export class UnsupportedKoriQuestionError extends KoriQueryError {
     super(message);
   }
 }
+
+/**
+ * Groq's API itself rate-limited the request (HTTP 429 — e.g. the free-tier
+ * TPM cap). Deliberately distinct from both KoriNaturalLanguageParseError
+ * (a request/response-shape problem) and UnsupportedKoriQuestionError (a
+ * perfectly answerable question Groq just didn't map) — a 429 says nothing
+ * about whether the question itself is supported, so callers that want to
+ * retry-after-backoff or surface "try again shortly" need to tell this
+ * apart from both.
+ */
+export class KoriProviderRateLimitedError extends KoriQueryError {
+  readonly code = "KORI_PROVIDER_RATE_LIMITED";
+
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+  }
+}
