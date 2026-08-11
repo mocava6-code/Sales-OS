@@ -485,7 +485,7 @@ describe("previewHistoricalImportHandler", () => {
 });
 
 describe("importHistoricalWhatsAppChatHandler", () => {
-  const baseInput = { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima", phone: "+10000000005" };
+  const baseInput = { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima", phone: "+51900000005" };
 
   it("returns UNAUTHENTICATED without calling findOrCreateLead when there's no session", async () => {
     let called = false;
@@ -521,7 +521,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
     let leadCalled = false;
     let importCalled = false;
     const result = await importHistoricalWhatsAppChatHandler(
-      { rawText: GROUP_CHAT, timezone: "America/Lima", phone: "+10000000005" },
+      { rawText: GROUP_CHAT, timezone: "America/Lima", phone: "+51900000005" },
       {
         resolver: createFakeAuthContextResolver(owner),
         db: fakeDb(["Koriaki"]),
@@ -544,7 +544,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
   it("imports a resolved chat, filtering out the unparseable-timestamp message before it reaches importEntries", async () => {
     let capturedEntries: unknown;
     const result = await importHistoricalWhatsAppChatHandler(
-      { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima", phone: "+10000000005" },
+      { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima", phone: "+51900000005" },
       {
         resolver: createFakeAuthContextResolver(owner),
         db: fakeDb(["Koriaki"]),

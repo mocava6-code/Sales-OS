@@ -158,6 +158,31 @@ describe("WhatsAppGateway.handleInboundMessage — 5/6. conversation creation an
     expect(store.conversations.size).toBe(1);
   });
 
+  it("Kori Data Correctness Phase 1D — a normalized phone stores canonical E.164, not Meta's raw digits", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    await gateway.handleInboundMessage(textMessage({ fromPhoneNumber: "51933517901" }));
+
+    const [lead] = [...store.leads.values()];
+    expect(lead.phone).toBe("+51933517901");
+  });
+
+  it("Kori Data Correctness Phase 1D — two messages from the same WhatsApp number reuse the same Lead (normalized phone matches consistently)", async () => {
+    const { deps, store } = createFakeGatewayDeps({
+      phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+    });
+    const gateway = createWhatsAppGateway(deps);
+
+    const first = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.A", fromPhoneNumber: "51933517901" }));
+    const second = await gateway.handleInboundMessage(textMessage({ externalId: "wamid.B", fromPhoneNumber: "51933517901" }));
+
+    expect(store.leads.size).toBe(1);
+    expect(first.leadId).toBe(second.leadId);
+  });
+
   it("Kori Data Correctness Phase 1B — a new lead gets the WhatsApp contact profile name", async () => {
     const { deps, store } = createFakeGatewayDeps({
       phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
@@ -211,7 +236,7 @@ describe("WhatsAppGateway.handleInboundMessage — 5/6. conversation creation an
     const result = await gateway.handleInboundMessage(textMessage()); // no contactName override — undefined
 
     expect(result.contactNameUpdated).toBe(false);
-    expect([...store.leads.values()][0].name).toBe("16315551234"); // still the phone placeholder
+    expect([...store.leads.values()][0].name).toBe("+16315551234"); // still the phone placeholder (now normalized E.164, per Phase 1D)
   });
 
   it("reuses the same conversation for a second message from the same lead", async () => {
@@ -556,7 +581,7 @@ describe("WhatsAppGateway.handleInboundMessage — 14. advisor resolution", () =
   it("surfaces the lead's assigned advisor as advisorUserId", async () => {
     const { deps } = createFakeGatewayDeps({
       phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
-      leadAssignments: { "16315551234": "advisor-1" },
+      leadAssignments: { "+16315551234": "advisor-1" }, // Kori Data Correctness Phase 1D — gateway.ts now normalizes to E.164 before this lookup
     });
     const gateway = createWhatsAppGateway(deps);
 

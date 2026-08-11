@@ -15,6 +15,7 @@ import type {
 } from "@/server/orchestration/types";
 import type { RecordDomainEventInput, RecordDomainEventResult } from "@/server/orchestration/record-domain-event";
 import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
+import { normalizeWhatsAppPhoneToE164 } from "@/lib/phone";
 import { applyWhatsAppContactName, findOrCreateLeadByPhone } from "@/server/services/lead-service";
 import { projectLeadCommercialProfile, type ProjectLeadCommercialProfileResult } from "@/server/services/lead-commercial-profile-service";
 import {
@@ -286,8 +287,11 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         throw new UnknownPhoneNumberError(message.phoneNumberId);
       }
 
-      // 3. Identify customer.
-      const lead = await deps.findOrCreateLead(phoneNumber.businessId, message.fromPhoneNumber);
+      // 3. Identify customer. Kori Data Correctness Phase 1D — normalized
+      // to canonical E.164 here, the write boundary for every new
+      // WhatsApp-created Lead (Meta's own from field is digits with no
+      // leading "+", never storage format on its own).
+      const lead = await deps.findOrCreateLead(phoneNumber.businessId, normalizeWhatsAppPhoneToE164(message.fromPhoneNumber));
 
       // 3b. Kori Data Correctness Phase 1B — opportunistically upgrade a
       // placeholder Lead name to the WhatsApp contact's profile name.
@@ -502,7 +506,8 @@ export function createWhatsAppGateway(overrides: WhatsAppGatewayDependencies = {
         throw new UnknownPhoneNumberError(message.phoneNumberId);
       }
 
-      const lead = await deps.findOrCreateLead(phoneNumber.businessId, message.toPhoneNumber);
+      // Kori Data Correctness Phase 1D — same E.164 normalization as the inbound-message path.
+      const lead = await deps.findOrCreateLead(phoneNumber.businessId, normalizeWhatsAppPhoneToE164(message.toPhoneNumber));
       const conversation = await deps.findOrCreateConversation(phoneNumber.businessId, lead.id, phoneNumber.id);
 
       let entry: { id: string };

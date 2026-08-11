@@ -1,6 +1,7 @@
 import { prisma } from "@/server/db/client";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
 import type { LeadInput } from "@/lib/validations/lead";
+import { buildLegacyPhoneLookupCandidates } from "@/lib/phone";
 
 export async function listLeads(businessId: string) {
   return prisma.lead.findMany({
@@ -68,14 +69,31 @@ export async function assertLeadBelongsToBusiness(businessId: string, leadId: st
 
 /**
  * "Identify customer" for an inbound WhatsApp message (server/whatsapp/gateway.ts)
- * — matches by exact phone string within the tenant, creating a bare-minimum
- * Lead if this number has never messaged before. `phone` must already be
- * normalized (see server/whatsapp/message-normalizer.ts) — this function
- * does no format coercion of its own, so the same number always matches the
- * same Lead regardless of caller.
+ * or manual/historical-import lead creation (server/actions/leads.ts,
+ * server/application/whatsapp-actions.ts) — creates a bare-minimum Lead if
+ * this number has never been seen before. `phone` must already be
+ * normalized to canonical E.164 (see lib/phone.ts) — this function does no
+ * format coercion of its own.
+ *
+ * Kori Data Correctness Phase 1D transition measure: the lookup checks
+ * `phone` PLUS lib/phone.ts's buildLegacyPhoneLookupCandidates(phone) — a
+ * small, fixed, exact-string set (canonical E.164 and the same digits with
+ * no leading "+") — so an existing Lead written before normalization
+ * existed is still found and reused, never duplicated, purely because of a
+ * phone-representation mismatch. Still scoped by businessId; never a
+ * fuzzy/suffix match. If more than one Lead already matches (a duplicate
+ * pair that predates this fix), the oldest is reused — the other is left
+ * exactly as-is, never merged or rewritten; that's the separate,
+ * not-yet-decided remediation work. A brand-new Lead is always created
+ * with the canonical `phone` value, never a legacy one — canonical
+ * storage for new/updated rows stays E.164 with a leading "+".
  */
 export async function findOrCreateLeadByPhone(businessId: string, phone: string, db: PrismaClientOrTransaction = prisma) {
-  const existing = await db.lead.findFirst({ where: { businessId, phone } });
+  const candidates = buildLegacyPhoneLookupCandidates(phone);
+  const existing = await db.lead.findFirst({
+    where: { businessId, phone: { in: candidates } },
+    orderBy: { createdAt: "asc" },
+  });
   if (existing) return existing;
 
   return db.lead.create({
