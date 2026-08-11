@@ -27,6 +27,7 @@ const DEFAULT_MAX_TOKENS = 1024;
 // Deterministic classification, not creative writing — no randomness needed.
 const GENERATION_TEMPERATURE = 0;
 const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ERROR_BODY_LENGTH = 2000;
 
 export interface GroqJsonSchema {
   name: string;
@@ -134,7 +135,13 @@ function createRealSendMessage(config: GroqClientConfig): GroqSendMessage {
     }
 
     if (!response.ok) {
-      throw new KoriNaturalLanguageParseError(`Groq request failed with status ${response.status}.`);
+      const bodyText = await response.text().catch(() => "");
+      // Groq's error body only ever describes what's wrong with the request
+      // (invalid model, malformed schema, etc.) — never a secret — so it's
+      // safe to carry as `cause` for diagnostics. Truncated defensively;
+      // never includes the Authorization header or apiKey.
+      const sanitizedBody = bodyText.slice(0, MAX_ERROR_BODY_LENGTH);
+      throw new KoriNaturalLanguageParseError(`Groq request failed with status ${response.status}.`, sanitizedBody || undefined);
     }
 
     let body: unknown;
