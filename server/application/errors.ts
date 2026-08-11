@@ -19,6 +19,13 @@ import {
   OrchestrationTransactionError,
   OutcomeNotAllowedForDecisionStatusError,
 } from "../orchestration/errors";
+import {
+  InvalidKoriQuerySpecError,
+  KoriAIConfigurationError,
+  KoriNaturalLanguageParseError,
+  KoriProviderRateLimitedError,
+  UnsupportedKoriQuestionError,
+} from "../kori/errors";
 
 export type ApplicationErrorCode =
   | "UNAUTHENTICATED"
@@ -30,6 +37,8 @@ export type ApplicationErrorCode =
   | "ANALYSIS_IN_PROGRESS"
   | "ORCHESTRATION_FAILURE"
   | "PROVIDER_UNAVAILABLE"
+  | "UNSUPPORTED_QUESTION"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 export interface ApplicationError {
@@ -150,6 +159,22 @@ export function toApplicationError(error: unknown): ApplicationError {
 
   if (error instanceof OrchestrationTransactionError) {
     return { code: "ORCHESTRATION_FAILURE", message: "That action couldn't be completed. Nothing was changed — try again." };
+  }
+
+  // Kori NL query errors — never surface `.cause` (a sanitized Groq error
+  // body or Zod issue list) or any other detail beyond these pre-crafted
+  // messages; that's exactly the kind of provider/internal detail this
+  // mapping function exists to keep off the client.
+  if (error instanceof UnsupportedKoriQuestionError || error instanceof InvalidKoriQuerySpecError) {
+    return { code: "UNSUPPORTED_QUESTION", message: "Kori can't answer that question yet." };
+  }
+
+  if (error instanceof KoriProviderRateLimitedError) {
+    return { code: "RATE_LIMITED", message: "Kori is temporarily rate-limited. Please try again in a moment." };
+  }
+
+  if (error instanceof KoriAIConfigurationError || error instanceof KoriNaturalLanguageParseError) {
+    return { code: "PROVIDER_UNAVAILABLE", message: "Kori's AI provider is unavailable right now. Try again shortly." };
   }
 
   return { code: "INTERNAL_ERROR", message: "Something went wrong. Try again shortly." };
