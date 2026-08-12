@@ -29,17 +29,20 @@ export class InvalidPhoneNumberError extends Error {
   }
 }
 
-function toValidatedE164(candidate: string, originalInput: string, defaultCountry?: "PE"): string {
-  let parsed;
+/** No throw, no I/O — the one place every function below calls into libphonenumber-js's parse+validate pair. */
+function tryParseE164(candidate: string, defaultCountry?: "PE"): string | null {
   try {
-    parsed = parsePhoneNumberWithError(candidate, defaultCountry);
+    const parsed = parsePhoneNumberWithError(candidate, defaultCountry);
+    return parsed.isValid() ? parsed.number : null; // libphonenumber-js's own E.164 serialization, e.g. "+51933517901"
   } catch {
-    throw new InvalidPhoneNumberError(originalInput);
+    return null;
   }
-  if (!parsed.isValid()) {
-    throw new InvalidPhoneNumberError(originalInput);
-  }
-  return parsed.number; // libphonenumber-js's own E.164 serialization, e.g. "+51933517901"
+}
+
+function toValidatedE164(candidate: string, originalInput: string, defaultCountry?: "PE"): string {
+  const result = tryParseE164(candidate, defaultCountry);
+  if (!result) throw new InvalidPhoneNumberError(originalInput);
+  return result;
 }
 
 /**
@@ -94,4 +97,41 @@ export function normalizeWhatsAppPhoneToE164(rawDigits: string): string {
 export function buildLegacyPhoneLookupCandidates(canonicalE164: string): string[] {
   const withoutLeadingPlus = canonicalE164.startsWith("+") ? canonicalE164.slice(1) : canonicalE164;
   return canonicalE164 === withoutLeadingPlus ? [canonicalE164] : [canonicalE164, withoutLeadingPlus];
+}
+
+/**
+ * READ-ONLY reconciliation only — never a write boundary, never called by
+ * findOrCreateLeadByPhone or any create/update path. Historical Lead rows
+ * predate Phase 1D and were written before either normalizer above
+ * existed, so a stored `phone` may be in any of three shapes depending on
+ * which unvalidated path wrote it: canonical/human "+"-prefixed
+ * international, WhatsApp's raw digits with no leading "+" (already
+ * encoding their own country code, e.g. "51933517901" or a foreign
+ * number like "447710173736"), or a bare Peru national number a human
+ * typed with no country code at all (e.g. "933517901"). Unlike the two
+ * functions above, the caller has no way to know which shape a given row
+ * is in — so this tries all three, in that order, and returns the first
+ * valid match. Used ONLY by
+ * server/db/scripts/audit-duplicate-lead-phones.ts to group already-stored
+ * rows for reporting; new writes always know their own real format and
+ * must keep using normalizePhoneToE164 / normalizeWhatsAppPhoneToE164
+ * instead of this best-effort fallback chain.
+ */
+export function normalizeStoredPhoneForAudit(rawPhone: string): string {
+  const trimmed = rawPhone.trim();
+  if (!trimmed) throw new InvalidPhoneNumberError(rawPhone);
+
+  if (trimmed.startsWith("+")) {
+    const asInternational = tryParseE164(trimmed);
+    if (asInternational) return asInternational;
+    throw new InvalidPhoneNumberError(rawPhone);
+  }
+
+  const asWhatsAppDigits = tryParseE164(`+${trimmed}`);
+  if (asWhatsAppDigits) return asWhatsAppDigits;
+
+  const asPeruNational = tryParseE164(trimmed, DEFAULT_PHONE_COUNTRY);
+  if (asPeruNational) return asPeruNational;
+
+  throw new InvalidPhoneNumberError(rawPhone);
 }

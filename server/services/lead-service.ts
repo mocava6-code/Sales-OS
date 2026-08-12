@@ -101,8 +101,8 @@ export async function findOrCreateLeadByPhone(businessId: string, phone: string,
   });
 }
 
-/** "Unambiguous phone placeholder" — the exact name findOrCreateLeadByPhone gives a brand-new Lead. Any other value means a human (or a prior contact-name upgrade) already set something real. */
-function isPlaceholderName(name: string, phone: string): boolean {
+/** "Unambiguous phone placeholder" — the exact name findOrCreateLeadByPhone gives a brand-new Lead. Any other value means a human (or a prior contact-name upgrade) already set something real. Exported for reuse by server/db/scripts/audit-duplicate-lead-phones.ts's survivor ranking (Legacy Data Remediation v0). */
+export function isPlaceholderName(name: string, phone: string): boolean {
   return name === phone;
 }
 
