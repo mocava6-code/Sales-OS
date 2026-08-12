@@ -56,6 +56,16 @@ export const OUTCOME_TYPE_VALUES = [
 // FOR it this phase.
 export const CUSTOMER_TYPE_FILTER_VALUES = ["RETAIL", "WHOLESALE"] as const;
 
+// Kori Semantic Response Intelligence v0 — mirrors server/db/schema.prisma's
+// ConversationActionStateValue verbatim. Deliberately a DIFFERENT question
+// than `needsReply`: needsReply is "which side sent the last message"
+// (Conversation.status, a transport fact); actionState is "does an advisor
+// genuinely need to do something" (server/services/
+// conversation-action-state-service.ts's canonical resolver). A question
+// like "¿quién necesita seguimiento aunque el último mensaje diga gracias?"
+// maps to actionState=FOLLOW_UP_REQUIRED, not needsReply=true.
+export const ACTION_STATE_FILTER_VALUES = ["REPLY_REQUIRED", "FOLLOW_UP_REQUIRED", "WAITING_ON_CUSTOMER", "NO_ACTION_REQUIRED", "UNCERTAIN"] as const;
+
 export const KORI_QUERY_DEFAULT_LIMIT = 25;
 export const KORI_QUERY_MAX_LIMIT = 100;
 
@@ -69,6 +79,7 @@ const koriQueryFiltersSchema = z
     productInterest: z.string().trim().min(1).optional(),
     customerType: z.enum(CUSTOMER_TYPE_FILTER_VALUES).optional(),
     needsReply: z.boolean().optional(),
+    actionState: z.enum(ACTION_STATE_FILTER_VALUES).optional(),
     overdueFollowUp: z.boolean().optional(),
     leadStatus: z.enum(LEAD_STATUS_VALUES).optional(),
     priority: z.enum(LEAD_PRIORITY_VALUES).optional(),
@@ -145,6 +156,8 @@ export interface KoriLeadRow {
   productInterest: string | null;
   customerType: "RETAIL" | "WHOLESALE" | "UNKNOWN" | null;
   needsReply: boolean;
+  /** Semantic Response Intelligence v0's canonical operational state — see server/services/conversation-action-state-service.ts's resolveOperationalActionState. Distinct from needsReply (see ACTION_STATE_FILTER_VALUES's doc comment). */
+  actionState: (typeof ACTION_STATE_FILTER_VALUES)[number];
   nextFollowUpDueAt: string | null;
   lastActivityAt: string | null;
 }

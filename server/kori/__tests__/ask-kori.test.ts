@@ -112,6 +112,7 @@ describe("askKori — orchestration", () => {
         productInterest: null,
         customerType: null,
         needsReply: true,
+        actionState: "UNCERTAIN" as const,
         nextFollowUpDueAt: null,
         lastActivityAt: null,
       },

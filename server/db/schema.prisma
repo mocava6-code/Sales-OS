@@ -251,6 +251,7 @@ model Business {
   pendingWhatsAppMessages  PendingWhatsAppMessage[]
   domainEvents             DomainEvent[]
   observations             Observation[]
+  conversationActionStates ConversationActionState[]
 
   // Knowledge Ingestion v1
   knowledgeSources                KnowledgeSource[]
@@ -284,6 +285,7 @@ model User {
   dailyInsights          DailyInsight[]
   advisorActions         AdvisorAction[]
   queuedWhatsAppMessages PendingWhatsAppMessage[]
+  conversationActionStatesSetByHuman ConversationActionState[] @relation("ConversationActionStateSetBy")
 
   // Knowledge Ingestion v1
   knowledgeSourcesCreated     KnowledgeSource[]
@@ -358,10 +360,85 @@ model Conversation {
   pendingWhatsAppMessages PendingWhatsAppMessage[]
   domainEvents            DomainEvent[]
   observations            Observation[]
+  actionState             ConversationActionState?
 
   @@index([businessId])
   @@index([leadId])
   @@map("conversations")
+}
+
+enum ConversationActionStateValue {
+  REPLY_REQUIRED
+  FOLLOW_UP_REQUIRED
+  WAITING_ON_CUSTOMER
+  NO_ACTION_REQUIRED
+  UNCERTAIN
+}
+
+enum ConversationActionStateSource {
+  DETERMINISTIC
+  AI
+  HUMAN
+  FOLLOW_UP
+  DECISION_ENGINE
+}
+
+// Semantic Response Intelligence v0 — the canonical "does an advisor
+// genuinely need to do something here" interpretation, layered ON TOP OF
+// Conversation.status (a pure transport-level fact: which side sent the
+// last message, nothing about whether it actually requires action). See
+// server/intelligence/response-action/** for the deterministic+AI hybrid
+// that computes this, and
+// server/services/conversation-action-state-service.ts's
+// resolveOperationalActionState for the canonical read model every
+// consumer (Today, Kori, analytics) must go through — never re-derive this
+// independently from Conversation.status/lastEntryDirection.
+model ConversationActionState {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+
+  actionState ConversationActionStateValue
+  // Bounded but intentionally NOT a native enum yet — Semantic Response
+  // Intelligence v0's reason-code taxonomy is explicitly meant to be
+  // refined from real conversation evidence post-launch (see the
+  // production audit this shipped with); validated at the application
+  // boundary by server/intelligence/response-action/reason-codes.ts's Zod
+  // enum instead, so adding a new code doesn't require a migration.
+  reasonCode        String
+  confidence        Float
+  reasoning         String
+  evidenceEntryIds  String[]
+  recommendedAction String?
+
+  source        ConversationActionStateSource
+  computedAt    DateTime
+  engineVersion String
+
+  // Staleness detection — a stored state (deterministic, AI, or human) is
+  // only trustworthy if nothing has happened in the conversation since it
+  // was computed. Compared against the conversation's live
+  // lastEntryAt/entry count at read time by resolveOperationalActionState.
+  basedOnLastEntryAt DateTime
+  basedOnEntryCount  Int
+
+  // A deliberate advisor decision — set only by
+  // setHumanConversationActionState. Outranks DETERMINISTIC/AI resolution
+  // until a new entry arrives after humanSetAt (checked the same
+  // staleness way), so the classifier never repeatedly fights an advisor
+  // who already made the call.
+  humanOverride    Boolean   @default(false)
+  humanSetByUserId String?
+  humanSetBy       User?     @relation("ConversationActionStateSetBy", fields: [humanSetByUserId], references: [id])
+  humanSetAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, actionState])
+  @@map("conversation_action_states")
 }
 
 model ConversationEntry {

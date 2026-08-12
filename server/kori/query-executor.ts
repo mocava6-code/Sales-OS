@@ -1,6 +1,7 @@
 import { prisma } from "@/server/db/client";
 import type { Prisma } from "@/server/db/generated/client";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
+import { resolveOperationalActionState, toConversationActionContext, type StoredActionStateForResolution } from "@/server/services/conversation-action-state-service";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
 import { parseKoriQuerySpec, type KoriLeadRow, type KoriQueryResult, type KoriQuerySpec } from "./query-spec";
 
@@ -125,9 +126,141 @@ function toLeadRow(lead: LeadForRow): KoriLeadRow {
     productInterest: lead.commercialProfile?.productInterest ?? null,
     customerType: (lead.commercialProfile?.customerType as KoriLeadRow["customerType"]) ?? null,
     needsReply: activeConversation?.status === "NEEDS_REPLY",
+    // Conservative default — this row shape doesn't fetch the entries/
+    // structural signals Semantic Response Intelligence needs (see
+    // fetchActionAwareLeadRows for the real computation, used whenever
+    // spec.filters.actionState is set). UNCERTAIN here means "not
+    // evaluated for this query," never a guess.
+    actionState: "UNCERTAIN",
     nextFollowUpDueAt: nextFollowUp ? nextFollowUp.dueAt.toISOString() : null,
     lastActivityAt: activeConversation ? activeConversation.lastEntryAt.toISOString() : null,
   };
+}
+
+const ACTION_AWARE_ENTRIES_WINDOW = 15;
+
+const ACTION_AWARE_LEAD_INCLUDE = {
+  commercialProfile: true,
+  followUps: { select: { status: true, dueAt: true } },
+  conversations: {
+    orderBy: { lastEntryAt: "desc" as const },
+    take: 1,
+    include: {
+      entries: { orderBy: { occurredAt: "desc" as const }, take: ACTION_AWARE_ENTRIES_WINDOW },
+      actionState: true,
+    },
+  },
+};
+
+type LeadForActionAwareRow = {
+  id: string;
+  name: string;
+  phone: string;
+  commercialProfile: { vehicleBrand: string | null; vehicleModel: string | null; productInterest: string | null; customerType: string | null; nextAction: string | null } | null;
+  followUps: { status: string; dueAt: Date }[];
+  conversations: {
+    id: string;
+    leadId: string;
+    status: string;
+    lastEntryAt: Date;
+    lastEntryDirection: string;
+    entries: { id: string; direction: string; content: string; occurredAt: Date }[];
+    actionState: {
+      actionState: string;
+      reasonCode: string;
+      confidence: number;
+      reasoning: string;
+      evidenceEntryIds: string[];
+      recommendedAction: string | null;
+      source: string;
+      humanOverride: boolean;
+      basedOnLastEntryAt: Date;
+    } | null;
+  }[];
+};
+
+/**
+ * The canonical Semantic Response Intelligence read path — resolves
+ * actionState through resolveOperationalActionState (the same function
+ * Today's grouping service uses), never a separate/independent
+ * definition. Also reports needsReply from the SAME active conversation,
+ * so the two fields on one row can never disagree about which
+ * conversation they're describing.
+ */
+function toActionAwareLeadRow(lead: LeadForActionAwareRow): KoriLeadRow {
+  const activeConversation = lead.conversations[0] ?? null;
+  const pendingFollowUps = lead.followUps.filter((f) => f.status === "PENDING");
+  const nextFollowUp = pendingFollowUps.length > 0 ? pendingFollowUps.reduce((earliest, f) => (f.dueAt < earliest.dueAt ? f : earliest)) : null;
+
+  const baseRow: KoriLeadRow = {
+    leadId: lead.id,
+    name: lead.name,
+    phone: lead.phone,
+    vehicleBrand: lead.commercialProfile?.vehicleBrand ?? null,
+    vehicleModel: lead.commercialProfile?.vehicleModel ?? null,
+    productInterest: lead.commercialProfile?.productInterest ?? null,
+    customerType: (lead.commercialProfile?.customerType as KoriLeadRow["customerType"]) ?? null,
+    needsReply: activeConversation?.status === "NEEDS_REPLY",
+    actionState: "UNCERTAIN",
+    nextFollowUpDueAt: nextFollowUp ? nextFollowUp.dueAt.toISOString() : null,
+    lastActivityAt: activeConversation ? activeConversation.lastEntryAt.toISOString() : null,
+  };
+
+  if (!activeConversation) return baseRow;
+
+  const context = toConversationActionContext({
+    id: activeConversation.id,
+    leadId: lead.id,
+    status: activeConversation.status as "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED",
+    lastEntryAt: activeConversation.lastEntryAt,
+    lastEntryDirection: activeConversation.lastEntryDirection as "INBOUND" | "OUTBOUND",
+    entries: [...activeConversation.entries]
+      .reverse()
+      .map((e) => ({ id: e.id, direction: e.direction as "INBOUND" | "OUTBOUND", content: e.content, occurredAt: e.occurredAt })),
+    lead: {
+      commercialProfile: lead.commercialProfile
+        ? { nextAction: lead.commercialProfile.nextAction as "ANSWER_QUESTION" | "CONFIRM_PAYMENT" | "SCHEDULE_DELIVERY" | "SEND_QUOTE" | "FOLLOW_UP" | "NONE" | null }
+        : null,
+      followUps: lead.followUps as { status: "PENDING" | "DONE" | "SNOOZED"; dueAt: Date }[],
+    },
+  });
+
+  const stored: StoredActionStateForResolution | null = activeConversation.actionState
+    ? {
+        actionState: activeConversation.actionState.actionState as StoredActionStateForResolution["actionState"],
+        reasonCode: activeConversation.actionState.reasonCode,
+        confidence: activeConversation.actionState.confidence,
+        reasoning: activeConversation.actionState.reasoning,
+        evidenceEntryIds: activeConversation.actionState.evidenceEntryIds,
+        recommendedAction: activeConversation.actionState.recommendedAction,
+        source: activeConversation.actionState.source as StoredActionStateForResolution["source"],
+        humanOverride: activeConversation.actionState.humanOverride,
+        basedOnLastEntryAt: activeConversation.actionState.basedOnLastEntryAt,
+      }
+    : null;
+
+  const resolved = resolveOperationalActionState(activeConversation.lastEntryAt, stored, context);
+  return { ...baseRow, actionState: resolved.actionState };
+}
+
+/**
+ * needsReply/actionState-aware fetch — mirrors fetchNeedsReplyFilteredLeadRows's
+ * shape but through toActionAwareLeadRow, so a query that filters by
+ * EITHER or BOTH fields reads them off the exact same resolved row (never
+ * two independently-computed answers about the same lead).
+ */
+async function fetchActionAwareLeadRows(
+  businessId: string,
+  filters: LeadFilters,
+  db: PrismaClientOrTransaction,
+): Promise<{ rows: KoriLeadRow[]; createdAtByLeadId: Map<string, Date> }> {
+  const where = buildLeadWhere(businessId, filters);
+  const leads = await db.lead.findMany({ where, include: ACTION_AWARE_LEAD_INCLUDE, orderBy: { createdAt: "desc" }, take: IN_MEMORY_PROCESSING_FETCH_CAP });
+  const createdAtByLeadId = new Map(leads.map((lead) => [lead.id, lead.createdAt]));
+  const rows = leads
+    .map(toActionAwareLeadRow)
+    .filter((row) => (filters!.needsReply === undefined || row.needsReply === filters!.needsReply) && (filters!.actionState === undefined || row.actionState === filters!.actionState));
+  return { rows, createdAtByLeadId };
 }
 
 function sortRowsInMemory(rows: KoriLeadRow[], sort: KoriQuerySpec["sort"]): KoriLeadRow[] {
@@ -144,28 +277,6 @@ function sortRowsInMemory(rows: KoriLeadRow[], sort: KoriQuerySpec["sort"]): Kor
   });
 }
 
-/**
- * The canonical needsReply-aware fetch: applies every WHERE-expressible
- * filter, then filters in application code by each lead's OWN
- * top-1-by-lastEntryAt conversation status — the exact same value
- * toLeadRow's `needsReply` field reports, so a row can never disagree with
- * why it was selected. Bounded by IN_MEMORY_PROCESSING_FETCH_CAP, same
- * tradeoff as sortRowsInMemory/executeGroupLeads. executeCountLeads and
- * executeListLeads both call this (never their own separate needsReply
- * logic), which is what guarantees they can't drift apart again.
- */
-async function fetchNeedsReplyFilteredLeadRows(
-  businessId: string,
-  filters: LeadFilters,
-  db: PrismaClientOrTransaction,
-): Promise<{ rows: KoriLeadRow[]; createdAtByLeadId: Map<string, Date> }> {
-  const where = buildLeadWhere(businessId, filters);
-  const leads = await db.lead.findMany({ where, include: LEAD_ROW_INCLUDE, orderBy: { createdAt: "desc" }, take: IN_MEMORY_PROCESSING_FETCH_CAP });
-  const createdAtByLeadId = new Map(leads.map((lead) => [lead.id, lead.createdAt]));
-  const rows = leads.map(toLeadRow).filter((row) => row.needsReply === filters!.needsReply);
-  return { rows, createdAtByLeadId };
-}
-
 function sortRowsByCreatedAtInMemory(rows: KoriLeadRow[], createdAtByLeadId: Map<string, Date>, direction: "asc" | "desc"): KoriLeadRow[] {
   const factor = direction === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
@@ -175,9 +286,13 @@ function sortRowsByCreatedAtInMemory(rows: KoriLeadRow[], createdAtByLeadId: Map
   });
 }
 
+function needsAugmentedFetch(filters: LeadFilters): boolean {
+  return filters?.needsReply !== undefined || filters?.actionState !== undefined;
+}
+
 async function executeCountLeads(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
-  if (spec.filters?.needsReply !== undefined) {
-    const { rows } = await fetchNeedsReplyFilteredLeadRows(businessId, spec.filters, db);
+  if (needsAugmentedFetch(spec.filters)) {
+    const { rows } = await fetchActionAwareLeadRows(businessId, spec.filters, db);
     return { type: "count", count: rows.length };
   }
   const count = await db.lead.count({ where: buildLeadWhere(businessId, spec.filters) });
@@ -185,8 +300,8 @@ async function executeCountLeads(businessId: string, spec: KoriQuerySpec, db: Pr
 }
 
 async function executeListLeads(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
-  if (spec.filters?.needsReply !== undefined) {
-    const { rows: matchingRows, createdAtByLeadId } = await fetchNeedsReplyFilteredLeadRows(businessId, spec.filters, db);
+  if (needsAugmentedFetch(spec.filters)) {
+    const { rows: matchingRows, createdAtByLeadId } = await fetchActionAwareLeadRows(businessId, spec.filters, db);
     const sortedRows =
       spec.sort?.field === "createdAt"
         ? sortRowsByCreatedAtInMemory(matchingRows, createdAtByLeadId, spec.sort.direction)

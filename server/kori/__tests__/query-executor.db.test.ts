@@ -536,4 +536,102 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
     leadDeleteSpy.mockRestore();
     leadUpsertSpy.mockRestore();
   });
+
+  describe("actionState filter — Semantic Response Intelligence v0", () => {
+    async function createLeadWithMessage(opts: { phone: string; content: string; direction?: "INBOUND" | "OUTBOUND" }) {
+      const lead = await db!.lead.create({ data: { businessId: fixture.businessId, name: opts.phone, phone: opts.phone } });
+      const now = new Date();
+      const conversation = await db!.conversation.create({
+        data: {
+          businessId: fixture.businessId,
+          leadId: lead.id,
+          source: "MANUAL_PASTE",
+          status: (opts.direction ?? "INBOUND") === "INBOUND" ? "NEEDS_REPLY" : "WAITING_ON_CUSTOMER",
+          lastEntryAt: now,
+          lastEntryDirection: opts.direction ?? "INBOUND",
+          createdByUserId: fixture.userId,
+        },
+      });
+      await db!.conversationEntry.create({ data: { conversationId: conversation.id, direction: opts.direction ?? "INBOUND", content: opts.content, occurredAt: now } });
+      return { lead, conversation };
+    }
+
+    it("COUNT_LEADS/LIST_LEADS with actionState=REPLY_REQUIRED live-computes from recent entries, no backfill required", async () => {
+      const { lead: replyLead } = await createLeadWithMessage({ phone: "+51900001001", content: "¿Cuánto cuesta el envío?" });
+      await createLeadWithMessage({ phone: "+51900001002", content: "Ok gracias" });
+
+      const count = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "COUNT_LEADS", filters: { actionState: "REPLY_REQUIRED" } }, db: db! });
+      expect(count).toEqual({ type: "count", count: 1 });
+
+      const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "REPLY_REQUIRED" } }, db: db! });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toEqual([replyLead.id]);
+      expect(list.rows[0].actionState).toBe("REPLY_REQUIRED");
+    });
+
+    it("actionState=NO_ACTION_REQUIRED correctly excludes the genuinely-actionable lead", async () => {
+      await createLeadWithMessage({ phone: "+51900001003", content: "¿Tienen disponible?" });
+      const { lead: closingLead } = await createLeadWithMessage({ phone: "+51900001004", content: "Perfecto, gracias" });
+
+      const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "NO_ACTION_REQUIRED" } }, db: db! });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toEqual([closingLead.id]);
+    });
+
+    it("a closing message with a structurally tracked payment commitment resolves to FOLLOW_UP_REQUIRED, not NO_ACTION_REQUIRED", async () => {
+      const { lead } = await createLeadWithMessage({ phone: "+51900001005", content: "Ok gracias" });
+      await db!.leadCommercialProfile.create({ data: { leadId: lead.id, businessId: fixture.businessId, nextAction: "CONFIRM_PAYMENT" } });
+
+      const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "FOLLOW_UP_REQUIRED" } }, db: db! });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toEqual([lead.id]);
+    });
+
+    it("combines actionState with needsReply — both read off the same resolved row, never disagreeing", async () => {
+      const { lead } = await createLeadWithMessage({ phone: "+51900001006", content: "¿Cuánto cuesta?" });
+      const result = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { actionState: "REPLY_REQUIRED", needsReply: true } },
+        db: db!,
+      });
+      if (result.type !== "lead_list") throw new Error("expected lead_list");
+      expect(result.rows.map((r) => r.leadId)).toEqual([lead.id]);
+      expect(result.rows[0].needsReply).toBe(true);
+      expect(result.rows[0].actionState).toBe("REPLY_REQUIRED");
+    });
+
+    it("a stored HUMAN override wins over what the live message content would otherwise resolve to", async () => {
+      const { lead, conversation } = await createLeadWithMessage({ phone: "+51900001007", content: "¿Cuánto cuesta?" }); // would live-resolve to REPLY_REQUIRED
+      await db!.conversationActionState.create({
+        data: {
+          conversationId: conversation.id,
+          businessId: fixture.businessId,
+          actionState: "NO_ACTION_REQUIRED",
+          reasonCode: "MARKED_NO_ACTION_REQUIRED",
+          confidence: 1,
+          reasoning: "Advisor already handled this outside the system.",
+          evidenceEntryIds: [],
+          source: "HUMAN",
+          computedAt: new Date(),
+          engineVersion: "test",
+          basedOnLastEntryAt: conversation.lastEntryAt,
+          basedOnEntryCount: 1,
+          humanOverride: true,
+          humanSetByUserId: fixture.userId,
+          humanSetAt: new Date(),
+        },
+      });
+
+      const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "NO_ACTION_REQUIRED" } }, db: db! });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toContain(lead.id);
+    });
+
+    it("a lead with no conversation at all never crashes and reports actionState=UNCERTAIN", async () => {
+      const lead = await db!.lead.create({ data: { businessId: fixture.businessId, name: "+51900001008", phone: "+51900001008" } });
+      const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "UNCERTAIN" } }, db: db! });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toContain(lead.id);
+    });
+  });
 });
