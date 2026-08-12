@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local scratch output from read-only production audit/dry-run scripts
+# (server/db/scripts/*.ts) — contains real customer PII, never committed
+/tmp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

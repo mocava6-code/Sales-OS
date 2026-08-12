@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../generated/client";
+import type { PrismaClientOrTransaction } from "../../persistence/prisma/client";
 import { planLeadMerge, type MergePlan, type MergePostconditionCheck } from "./merge-remediation-plan";
 
 // Kori Legacy Data Remediation v0 — Merge Executor v0, DRY-RUN ONLY.
@@ -10,9 +10,11 @@ import { planLeadMerge, type MergePlan, type MergePostconditionCheck } from "./m
 // internal helper function capable of calling a mutating Prisma method.
 // Every "write" this module describes (writePreview below) is an inert
 // plain-object description — {model, method, args} — never a real Prisma
-// call. A future, SEPARATELY approved and SEPARATELY reviewed module would
-// add the real transactional executor; until that exists, calling this
-// function can only ever read and describe, never act.
+// call. The real, SEPARATELY approved and SEPARATELY reviewed transactional
+// executor is server/db/scripts/apply-lead-merge.ts, which reuses this
+// module's own drift-detection logic before it ever writes — this file's
+// job stays permanently read-only: calling this function can only ever
+// read and describe, never act, by design, not merely by convention.
 
 export type ExecutionMode = "DRY_RUN";
 
@@ -150,7 +152,7 @@ function buildWritePreview(plan: MergePlan): PlannedWriteStep[] {
  * explicitly deferred to whichever executor exists; this is that executor.
  */
 export async function executeLeadMerge(
-  db: PrismaClient,
+  db: PrismaClientOrTransaction,
   input: { businessId: string; survivorLeadId: string; loserLeadId: string; mode: ExecutionMode; approvedPlan: MergePlan },
 ): Promise<ExecutionPreview> {
   const plan = await planLeadMerge(db, { businessId: input.businessId, survivorLeadId: input.survivorLeadId, loserLeadId: input.loserLeadId });

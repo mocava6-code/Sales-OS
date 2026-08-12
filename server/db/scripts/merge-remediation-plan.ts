@@ -1,25 +1,18 @@
-import type {
-  ConversationChannel,
-  ConversationSource,
-  ConversationStatus,
-  CustomerTypeProfile,
-  FollowUpStatus,
-  LeadNextAction,
-  OutcomeType,
-  PrismaClient,
-} from "../generated/client";
+import type { ConversationChannel, ConversationSource, ConversationStatus, CustomerTypeProfile, FollowUpStatus, LeadNextAction, OutcomeType } from "../generated/client";
+import type { PrismaClientOrTransaction } from "../../persistence/prisma/client";
 import { normalizeStoredPhoneForAudit } from "../../../lib/phone";
 
 // Kori Legacy Data Remediation v0 — Merge Remediation v0, PLANNING ONLY.
 //
 // This module has exactly one capability: describe, in full and precise
-// detail, what a future merge of two duplicate Leads WOULD do. It has no
-// execution capability at all — there is no code path in this file that
-// creates, updates, or deletes a single row. planLeadMerge only ever
-// issues read (`findUnique`) queries. A future, SEPARATELY approved and
-// SEPARATELY reviewed module will add the real atomic-transaction executor
-// this plan is designed to feed; until that exists, the only thing this
-// module can ever produce is a MergePlan for a human to read.
+// detail, what a merge of two duplicate Leads WOULD do. It has no execution
+// capability at all — there is no code path in this file that creates,
+// updates, or deletes a single row. planLeadMerge only ever issues read
+// (`findUnique`) queries. The real, SEPARATELY approved and SEPARATELY
+// reviewed atomic-transaction executor this plan is designed to feed is
+// apply-lead-merge.ts — the only write-capable module in this toolchain;
+// this file's own job is, and stays, producing a MergePlan for a human to
+// read, never acting on one.
 //
 // No generalized "merge all duplicates" command, no automatic survivor
 // selection, no bulk mode, no migration, no @@unique constraint, no
@@ -229,7 +222,7 @@ interface FetchedLead {
   followUps: { id: string; status: FollowUpStatus; dueAt: Date }[];
 }
 
-async function fetchLeadForMergePlan(db: PrismaClient, leadId: string): Promise<FetchedLead | null> {
+async function fetchLeadForMergePlan(db: PrismaClientOrTransaction, leadId: string): Promise<FetchedLead | null> {
   return db.lead.findUnique({
     where: { id: leadId },
     select: {
@@ -288,14 +281,13 @@ function emptyOperations(): MergePlanOperations {
 }
 
 const TRANSACTION_NOTE =
-  "This module never writes anything — it only plans. A future, separately " +
-  "approved executor must apply every operation in this plan inside exactly " +
-  "one Prisma $transaction: all Conversation/FollowUp re-parents, the " +
-  "Lead.phone normalization, and the loser Lead deletion succeed together " +
-  "or none of them apply. Outcomes and their ancestors (DecisionRecord, " +
-  "DecisionEvent, AdvisorAction, entries, snapshots, domain events, " +
-  "observations) need no direct write — they move with their Conversation " +
-  "automatically and are already covered by the Conversation re-parent.";
+  "This module never writes anything — it only plans. server/db/scripts/apply-lead-merge.ts " +
+  "applies every operation in this plan inside exactly one Prisma $transaction: all " +
+  "Conversation/FollowUp re-parents, the Lead.phone normalization, and the loser Lead " +
+  "deletion succeed together or none of them apply. Outcomes and their ancestors " +
+  "(DecisionRecord, DecisionEvent, AdvisorAction, entries, snapshots, domain events, " +
+  "observations) need no direct write — they move with their Conversation automatically " +
+  "and are already covered by the Conversation re-parent.";
 
 /**
  * v0 design decision, not yet built: there is no @@unique([businessId,
@@ -348,15 +340,15 @@ function blockedPlan(
 }
 
 /**
- * READ-ONLY. Produces a MergePlan describing exactly what a future merge
- * of loserLeadId into survivorLeadId WOULD do — never writes anything.
+ * READ-ONLY. Produces a MergePlan describing exactly what merging
+ * loserLeadId into survivorLeadId WOULD do — never writes anything.
  * `dryRun` is always `true`: there is no parameter, flag, or code path in
  * this module that can make it execute. Every finding here is advisory,
  * exactly like Phase B's survivorRecommendation — a human decides whether
- * (and how) to actually run a future executor built against this plan.
+ * (and how) to actually run apply-lead-merge.ts against this plan.
  */
 export async function planLeadMerge(
-  db: PrismaClient,
+  db: PrismaClientOrTransaction,
   input: { businessId: string; survivorLeadId: string; loserLeadId: string },
 ): Promise<MergePlan> {
   const generatedAt = new Date();
