@@ -101,9 +101,28 @@ export async function findOrCreateLeadByPhone(businessId: string, phone: string,
   });
 }
 
-/** "Unambiguous phone placeholder" — the exact name findOrCreateLeadByPhone gives a brand-new Lead. Any other value means a human (or a prior contact-name upgrade) already set something real. Exported for reuse by server/db/scripts/audit-duplicate-lead-phones.ts's survivor ranking (Legacy Data Remediation v0). */
+/**
+ * "Unambiguous phone placeholder" — the exact name findOrCreateLeadByPhone
+ * gives a brand-new Lead. Any other value means a human (or a prior
+ * contact-name upgrade) already set something real.
+ *
+ * Checks `name` against every legacy representation of `phone`
+ * (buildLegacyPhoneLookupCandidates: canonical E.164 and the same digits
+ * with no leading "+"), not just the current exact `phone` string — a bare
+ * equality check regressed silently once Kori Legacy Data Remediation v0's
+ * phone-canonicalization backfill rewrote `phone` to its canonical form for
+ * existing leads without touching `name`: a lead created before that
+ * backfill still has `name === "51900000001"` but `phone` now reads
+ * `"+51900000001"`, so `name === phone` would wrongly stop recognizing an
+ * obvious placeholder as one. Confirmed by a production data-quality
+ * metrics run finding 0% placeholder names despite several leads whose
+ * name was visibly still a bare digit string.
+ *
+ * Exported for reuse by server/db/scripts/merge-remediation-plan.ts's
+ * survivor ranking.
+ */
 export function isPlaceholderName(name: string, phone: string): boolean {
-  return name === phone;
+  return buildLegacyPhoneLookupCandidates(phone).includes(name);
 }
 
 /**

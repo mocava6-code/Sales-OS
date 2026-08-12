@@ -1,9 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyWhatsAppContactName } from "../lead-service";
+import { applyWhatsAppContactName, isPlaceholderName } from "../lead-service";
 
 function fakeDb(overrides: { update?: ReturnType<typeof vi.fn> } = {}) {
   return { lead: { update: overrides.update ?? vi.fn().mockResolvedValue({}) } } as never;
 }
+
+describe("isPlaceholderName", () => {
+  it("true when name exactly equals the current phone", () => {
+    expect(isPlaceholderName("+51933517901", "+51933517901")).toBe(true);
+  });
+
+  it("true when name equals a legacy (no-plus) representation of the current canonical phone — the phone-canonicalization-backfill regression case", () => {
+    // A lead created before Kori Legacy Data Remediation v0's phone
+    // canonicalization backfill still has name="51900000001" (its
+    // original placeholder), but phone is now "+51900000001" after the
+    // backfill rewrote it. A bare `name === phone` check would wrongly
+    // stop recognizing this as a placeholder — confirmed by a production
+    // data-quality run finding 0% placeholder names despite several leads
+    // whose name was visibly still a bare digit string.
+    expect(isPlaceholderName("51900000001", "+51900000001")).toBe(true);
+  });
+
+  it("false for a real human name, even one that happens to share digits with the phone", () => {
+    expect(isPlaceholderName("Juan Pérez", "+51900000001")).toBe(false);
+  });
+});
 
 describe("applyWhatsAppContactName", () => {
   it("new lead: upgrades the phone placeholder to a non-empty WhatsApp profile name", async () => {
@@ -23,6 +44,16 @@ describe("applyWhatsAppContactName", () => {
     const result = await applyWhatsAppContactName(lead, "María López", fakeDb({ update }));
 
     expect(result).toEqual({ updated: true, name: "María López" });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("legacy-format placeholder lead whose phone was later canonicalized (backfill) still gets upgraded", async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const lead = { id: "lead-2b", name: "51900000001", phone: "+51900000001" }; // name predates the phone-canonicalization backfill
+
+    const result = await applyWhatsAppContactName(lead, "Julio César", fakeDb({ update }));
+
+    expect(result).toEqual({ updated: true, name: "Julio César" });
     expect(update).toHaveBeenCalledTimes(1);
   });
 
