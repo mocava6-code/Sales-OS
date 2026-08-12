@@ -110,21 +110,23 @@ function buildWritePreview(plan: MergePlan): PlannedWriteStep[] {
     },
     {
       step: 6,
-      description: plan.operations.phone ? plan.operations.phone.detail : "No phone plan (blocked before this step).",
+      description: `Verify: loser has zero remaining conversations/follow-ups/profile rows before deletion (survivor conversations will be ${plan.cardinality.expectedAfter.survivorConversationCount}, follow-ups ${plan.cardinality.expectedAfter.survivorFollowUpCount}, preserved outcomes ${plan.cardinality.expectedAfter.preservedOutcomeCount}). No write.`,
+      operation: null,
+    },
+    {
+      step: 7,
+      description: `Delete loser Lead ${plan.loserLeadId}.`,
+      operation: plan.operations.loserDeletion ? { model: "lead", method: "delete", args: { where: { id: plan.loserLeadId } } } : null,
+    },
+    {
+      step: 8,
+      description: plan.operations.phone
+        ? `${plan.operations.phone.detail} Runs after the loser delete, deliberately — with @@unique([businessId, phone]) live, the loser often still holds this exact canonical value until it's gone.`
+        : "No phone plan (blocked before this step).",
       operation:
         plan.operations.phone && plan.operations.phone.currentSurvivorPhone !== plan.operations.phone.targetCanonicalPhone
           ? { model: "lead", method: "update", args: { where: { id: plan.survivorLeadId }, data: { phone: plan.operations.phone.targetCanonicalPhone } } }
           : null,
-    },
-    {
-      step: 7,
-      description: `Verify: survivor conversations=${plan.cardinality.expectedAfter.survivorConversationCount}, survivor follow-ups=${plan.cardinality.expectedAfter.survivorFollowUpCount}, preserved outcomes=${plan.cardinality.expectedAfter.preservedOutcomeCount}, moved IDs belong to survivor, original survivor conversations still present. No write.`,
-      operation: null,
-    },
-    {
-      step: 8,
-      description: `Delete loser Lead ${plan.loserLeadId}.`,
-      operation: plan.operations.loserDeletion ? { model: "lead", method: "delete", args: { where: { id: plan.loserLeadId } } } : null,
     },
     {
       step: 9,

@@ -129,9 +129,12 @@ describe.skipIf(!shouldRunDbTests)("planLeadMerge (RUN_DB_TESTS=true)", () => {
       expect(survivorPreExisting.relatedIds).toEqual([survivorConv.id]);
 
       // Issue 4 — the future executor's exact intended order is documented on every plan.
+      // The phone-normalize step runs AFTER the loser delete (not before):
+      // production's @@unique([businessId, phone]) constraint means the
+      // loser often still holds the exact canonical value until it's gone.
       expect(plan.transactionOrder[0]).toContain("1. Re-read and validate all preconditions.");
-      expect(plan.transactionOrder[5]).toContain("6. Normalize survivor phone to canonical E.164.");
-      expect(plan.transactionOrder[7]).toContain("8. Delete the loser Lead.");
+      expect(plan.transactionOrder[6]).toContain("7. Delete the loser Lead.");
+      expect(plan.transactionOrder[7]).toContain("8. Normalize survivor phone to canonical E.164");
       expect(plan.transactionOrder.at(-1)).toContain("No partial merge");
 
       // Nothing was actually re-parented or deleted — this is a plan, not an execution.

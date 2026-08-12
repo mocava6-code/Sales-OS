@@ -290,15 +290,19 @@ const TRANSACTION_NOTE =
   "and are already covered by the Conversation re-parent.";
 
 /**
- * v0 design decision, not yet built: there is no @@unique([businessId,
- * phone]) constraint today, so re-parenting/deleting and normalizing the
- * phone could technically happen in either order without a constraint
- * violation. This order is still fixed and intentional — validate first,
- * move child data before touching identity fields, verify counts/ids
- * BEFORE the irreversible loser deletion (step 8), and only normalize the
- * phone (step 6) once the merge is otherwise certain to complete. Any
- * failure at any step throws and rolls back the entire transaction — no
- * partial merge is ever left behind.
+ * The phone-normalize step comes AFTER the loser delete, not before — this
+ * is load-bearing, not stylistic. Production now has @@unique([businessId,
+ * phone]) live: a duplicate pair's loser very often still holds the exact
+ * canonical phone value right up until it's deleted (that's inherent to
+ * two rows being duplicates of the same real number), so normalizing the
+ * survivor's phone any earlier would transiently collide with the loser's
+ * own still-live row and fail the whole transaction under a non-deferred
+ * unique constraint. Everything else about the ordering is still
+ * intentional too: validate first, move child data before touching
+ * identity fields, verify counts/ids BEFORE the irreversible loser
+ * deletion (step 7), and only normalize the phone (step 8) once the
+ * loser is already gone. Any failure at any step throws and rolls back
+ * the entire transaction — no partial merge is ever left behind.
  */
 const FUTURE_EXECUTOR_TRANSACTION_ORDER: readonly string[] = [
   "1. Re-read and validate all preconditions.",
@@ -306,9 +310,9 @@ const FUTURE_EXECUTOR_TRANSACTION_ORDER: readonly string[] = [
   "3. Reparent loser follow-ups to survivor.",
   "4. Preserve/resolve commercial profile according to the explicit plan (never silently overwrite on collision).",
   "5. Preserve survivor assignment and name (never copy the loser's).",
-  "6. Normalize survivor phone to canonical E.164.",
-  "7. Verify intermediate child IDs/counts against this plan's cardinality snapshot.",
-  "8. Delete the loser Lead.",
+  "6. Verify intermediate child IDs/counts against this plan's cardinality snapshot.",
+  "7. Delete the loser Lead.",
+  "8. Normalize survivor phone to canonical E.164 (only now, with the loser's row gone, safe under @@unique([businessId, phone])).",
   "9. Verify final postconditions.",
   "10. Commit the transaction.",
   "If any verification fails at any step: throw and roll back the entire transaction. No partial merge.",

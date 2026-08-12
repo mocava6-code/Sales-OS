@@ -144,7 +144,7 @@ export async function applyLeadMerge(
       // child relation that sometimes must be explicitly discarded
       // (RESTRICT-constrained: Lead has no cascade delete for
       // LeadCommercialProfile, so a collision resolved to KEEP_SURVIVOR
-      // requires an explicit delete of the loser's row before step 8 can
+      // requires an explicit delete of the loser's row before step 7 can
       // succeed — never a silent no-op the way the dry-run preview shows
       // it for the ordinary, non-colliding KEEP_SURVIVOR case).
       let commercialProfileAction: AppliedLeadMergeResult["commercialProfileAction"];
@@ -161,14 +161,7 @@ export async function applyLeadMerge(
 
       // 5. Assignment/name: never written. The survivor's existing values are the only ones that can ever apply.
 
-      // 6. Canonicalize the survivor's phone.
-      const survivorBefore = await tx.lead.findUnique({ where: { id: input.survivorLeadId }, select: { phone: true } });
-      if (!survivorBefore) throw new MergeAbortedError("Survivor disappeared mid-transaction.");
-      if (survivorBefore.phone !== canonicalPhone) {
-        await tx.lead.update({ where: { id: input.survivorLeadId }, data: { phone: canonicalPhone } });
-      }
-
-      // 7. Verify intermediate state — the loser must have zero remaining child rows before it can be deleted (Lead's FKs are all ON DELETE RESTRICT, never cascade).
+      // 6. Verify intermediate state — the loser must have zero remaining child rows before it can be deleted (Lead's FKs are all ON DELETE RESTRICT, never cascade).
       const [remainingConversations, remainingFollowUps, remainingProfile] = await Promise.all([
         tx.conversation.count({ where: { leadId: input.loserLeadId } }),
         tx.followUp.count({ where: { leadId: input.loserLeadId } }),
@@ -180,13 +173,28 @@ export async function applyLeadMerge(
         );
       }
 
-      // 8. Delete the loser Lead — only reachable once every child row is confirmed gone.
+      // 7. Delete the loser Lead — only reachable once every child row is confirmed gone.
       await tx.lead.delete({ where: { id: input.loserLeadId } });
 
+      // 8. Canonicalize the survivor's phone — deliberately AFTER the loser
+      // delete, not before: with @@unique([businessId, phone]) live, the
+      // loser very often still holds the canonical value right up until
+      // it's deleted (that's inherent to two rows being duplicates of the
+      // same real phone number), so normalizing the survivor's phone any
+      // earlier would transiently collide with the loser's own still-live
+      // row and fail the whole transaction. Deleting first removes that
+      // collision risk entirely.
+      const survivorBefore = await tx.lead.findUnique({ where: { id: input.survivorLeadId }, select: { phone: true } });
+      if (!survivorBefore) throw new MergeAbortedError("Survivor disappeared mid-transaction.");
+      if (survivorBefore.phone !== canonicalPhone) {
+        await tx.lead.update({ where: { id: input.survivorLeadId }, data: { phone: canonicalPhone } });
+      }
+
       // 9. Verify final state.
-      const [survivorConversationCount, survivorFollowUpCount, loserStillExists] = await Promise.all([
+      const [survivorConversationCount, survivorFollowUpCount, survivorAfter, loserStillExists] = await Promise.all([
         tx.conversation.count({ where: { leadId: input.survivorLeadId } }),
         tx.followUp.count({ where: { leadId: input.survivorLeadId } }),
+        tx.lead.findUnique({ where: { id: input.survivorLeadId }, select: { phone: true } }),
         tx.lead.findUnique({ where: { id: input.loserLeadId }, select: { id: true } }),
       ]);
       if (survivorConversationCount !== freshPlan.cardinality.expectedAfter.survivorConversationCount) {
@@ -194,6 +202,9 @@ export async function applyLeadMerge(
       }
       if (survivorFollowUpCount !== freshPlan.cardinality.expectedAfter.survivorFollowUpCount) {
         throw new MergeAbortedError(`Final survivor follow-up count ${survivorFollowUpCount} != expected ${freshPlan.cardinality.expectedAfter.survivorFollowUpCount}.`);
+      }
+      if (survivorAfter?.phone !== canonicalPhone) {
+        throw new MergeAbortedError(`Final survivor phone "${survivorAfter?.phone}" != expected canonical "${canonicalPhone}".`);
       }
       if (loserStillExists) throw new MergeAbortedError("Loser lead still exists after delete — aborting.");
 

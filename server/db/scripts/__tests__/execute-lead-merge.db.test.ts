@@ -114,16 +114,19 @@ describe.skipIf(!shouldRunDbTests)("executeLeadMerge (RUN_DB_TESTS=true)", () =>
       const nameAssignmentStep = preview.writePreview.find((w) => w.step === 5)!;
       expect(nameAssignmentStep.operation).toBeNull();
 
-      // The survivor's own stored phone ("51900000001", no "+") is NOT
-      // yet canonical — this is the one write step that must be non-null.
-      const phoneStep = preview.writePreview.find((w) => w.step === 6)!;
-      expect(phoneStep.operation).toMatchObject({ model: "lead", method: "update", args: { where: { id: p.survivor.id }, data: { phone: p.canonicalPhone } } });
-
-      const verifyStep = preview.writePreview.find((w) => w.step === 7)!;
+      const verifyStep = preview.writePreview.find((w) => w.step === 6)!;
       expect(verifyStep.operation).toBeNull();
 
-      const deleteStep = preview.writePreview.find((w) => w.step === 8)!;
+      const deleteStep = preview.writePreview.find((w) => w.step === 7)!;
       expect(deleteStep.operation).toMatchObject({ model: "lead", method: "delete", args: { where: { id: p.loser.id } } });
+
+      // The survivor's own stored phone ("51900000001", no "+") is NOT yet
+      // canonical — this is the one write step that must be non-null. It
+      // runs AFTER the loser delete (step 7), not before: with
+      // @@unique([businessId, phone]) live, the loser holds this exact
+      // canonical value until it's gone.
+      const phoneStep = preview.writePreview.find((w) => w.step === 8)!;
+      expect(phoneStep.operation).toMatchObject({ model: "lead", method: "update", args: { where: { id: p.survivor.id }, data: { phone: p.canonicalPhone } } });
 
       const finalVerifyStep = preview.writePreview.find((w) => w.step === 9)!;
       expect(finalVerifyStep.operation).toBeNull();
@@ -310,7 +313,8 @@ describe.skipIf(!shouldRunDbTests)("executeLeadMerge (RUN_DB_TESTS=true)", () =>
         expect(preview.plan.transactionOrder[step.step - 1]).toMatch(new RegExp(`^${step.step}\\. `));
       }
       expect(preview.plan.transactionOrder[preview.writePreview.find((s) => s.step === 2)!.step - 1]).toContain("Reparent loser conversations");
-      expect(preview.plan.transactionOrder[preview.writePreview.find((s) => s.step === 8)!.step - 1]).toContain("Delete the loser Lead");
+      expect(preview.plan.transactionOrder[preview.writePreview.find((s) => s.step === 7)!.step - 1]).toContain("Delete the loser Lead");
+      expect(preview.plan.transactionOrder[preview.writePreview.find((s) => s.step === 8)!.step - 1]).toContain("Normalize survivor phone");
     } finally {
       await cleanupPair(p);
     }

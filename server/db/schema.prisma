@@ -310,6 +310,16 @@ model Lead {
   followUps         FollowUp[]
   commercialProfile LeadCommercialProfile?
 
+  // Kori Legacy Data Remediation v0 — safe to add only once production
+  // verified every Lead.phone canonical (E.164, no legacy WhatsApp-raw-digit
+  // or human-typed format) and collision-free per business; see
+  // server/db/scripts/audit-duplicate-lead-phones.ts and the one-time
+  // canonicalization backfill that ran immediately before this migration.
+  // Every write path (findOrCreateLeadByPhone, leadSchema's manual-entry
+  // validation, historical import) already canonicalizes via lib/phone.ts
+  // before persisting — this constraint is a backstop, not the primary
+  // defense.
+  @@unique([businessId, phone])
   @@index([businessId])
   @@map("leads")
 }
