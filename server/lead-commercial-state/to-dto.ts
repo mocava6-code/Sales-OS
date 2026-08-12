@@ -29,6 +29,7 @@ export function toLeadCommercialStateDTO(state: LeadCommercialState): LeadCommer
     nextAction: toFieldDisplayDTO(state.nextAction, identity),
     followUpDueAt: toFieldDisplayDTO(state.followUpDueAt, toIso),
     activeConversationId: state.metadata.activeConversationId,
+    commercialContextConversationId: state.metadata.commercialContextConversationId,
     derivedAt: state.metadata.derivedAt.toISOString(),
   };
 }

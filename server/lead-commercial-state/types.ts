@@ -36,5 +36,6 @@ export interface LeadCommercialStateDTO {
   /** ISO string. */
   followUpDueAt: FieldDisplayDTO<string>;
   activeConversationId: string;
+  commercialContextConversationId: string;
   derivedAt: string;
 }

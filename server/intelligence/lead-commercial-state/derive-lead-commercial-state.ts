@@ -8,9 +8,10 @@
 import type { Evidence, Fact, Inference } from "../types";
 import { resolveActiveConversation } from "./active-conversation";
 import { NoConversationsForLeadError } from "./errors";
-import { foldMutableFieldCandidates } from "./fold-candidates";
+import { foldMutableFieldCandidates, foldTransientFieldCandidates } from "./fold-candidates";
 import { DEFAULT_SLA_HOURS_BY_NEXT_ACTION, resolveFollowUpDueAt } from "./follow-up-sla";
 import { resolveNextAction } from "./next-action-resolver";
+import { resolveCommercialContextConversationId } from "./resolve-commercial-context";
 import { resolveConversationFacts } from "./resolve-conversation-facts";
 import {
   LEAD_COMMERCIAL_STATE_ENGINE_SCHEMA_VERSION,
@@ -80,48 +81,38 @@ export function deriveLeadCommercialState(
 
   const conversationFacts = resolveConversationFacts(activeContext);
 
-  const productInterest = toFact(
-    foldMutableFieldCandidates(
-      dependencies.productInterestExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
+  const productInterestCandidates = dependencies.productInterestExtractors.flatMap((e) => e.extract(messages));
+  const vehicleModelCandidates = dependencies.vehicleModelExtractors.flatMap((e) => e.extract(messages));
+  const vehicleBrandCandidates = dependencies.vehicleBrandExtractors.flatMap((e) => e.extract(messages));
+  const vehicleYearCandidates = dependencies.vehicleYearExtractors.flatMap((e) => e.extract(messages));
+  const locationCandidates = dependencies.locationExtractors.flatMap((e) => e.extract(messages));
+  const dateCandidates = dependencies.dateExtractors.flatMap((e) => e.extract(messages));
+  const paymentCandidates = dependencies.paymentExtractors.flatMap((e) => e.extract(messages));
+
+  const commercialContextConversationId = resolveCommercialContextConversationId(
+    [
+      ...productInterestCandidates,
+      ...vehicleModelCandidates,
+      ...vehicleBrandCandidates,
+      ...vehicleYearCandidates,
+      ...locationCandidates,
+      ...dateCandidates,
+      ...paymentCandidates,
+    ],
+    conversations,
+    activeContext.activeConversationId,
   );
-  const vehicleModel = toFact(
-    foldMutableFieldCandidates(
-      dependencies.vehicleModelExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
-  const vehicleBrand = toFact(
-    foldMutableFieldCandidates(
-      dependencies.vehicleBrandExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
-  const vehicleYear = toFact(
-    foldMutableFieldCandidates(
-      dependencies.vehicleYearExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
-  const deliveryLocation = toFact(
-    foldMutableFieldCandidates(
-      dependencies.locationExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
-  const requestedDeliveryAt = toFact(
-    foldMutableFieldCandidates(
-      dependencies.dateExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
-  const paymentStatus = toInference(
-    foldMutableFieldCandidates(
-      dependencies.paymentExtractors.flatMap((e) => e.extract(messages)),
-      activeContext.activeConversationId,
-    ),
-  );
+
+  const productInterest = toFact(foldMutableFieldCandidates(productInterestCandidates, commercialContextConversationId));
+  const vehicleModel = toFact(foldMutableFieldCandidates(vehicleModelCandidates, commercialContextConversationId));
+  const vehicleBrand = toFact(foldMutableFieldCandidates(vehicleBrandCandidates, commercialContextConversationId));
+  const vehicleYear = toFact(foldMutableFieldCandidates(vehicleYearCandidates, commercialContextConversationId));
+  const deliveryLocation = toFact(foldMutableFieldCandidates(locationCandidates, commercialContextConversationId));
+  // paymentStatus/requestedDeliveryAt are transient (see fold-candidates.ts)
+  // — scoped to the commercial-context conversation only, no cross-
+  // conversation historical fallback.
+  const requestedDeliveryAt = toFact(foldTransientFieldCandidates(dateCandidates, commercialContextConversationId));
+  const paymentStatus = toInference(foldTransientFieldCandidates(paymentCandidates, commercialContextConversationId));
 
   const nextActionResolution = resolveNextAction({
     paymentStatus,
@@ -164,6 +155,7 @@ export function deriveLeadCommercialState(
       engineSchemaVersion: LEAD_COMMERCIAL_STATE_ENGINE_SCHEMA_VERSION,
       extractorVersions: buildExtractorVersionMap(dependencies),
       activeConversationId: activeContext.activeConversationId,
+      commercialContextConversationId,
       slaHoursByNextAction: { ...DEFAULT_SLA_HOURS_BY_NEXT_ACTION, ...slaHoursByNextAction },
       derivedAt: new Date(),
     },

@@ -93,7 +93,16 @@ export interface FieldExtractor<T> {
 export interface LeadCommercialStateMetadata {
   engineSchemaVersion: number;
   extractorVersions: Record<string, string>;
+  /** The operationally-active conversation — most recent activity of any kind. Drives lastContactAt/lastContactDirection/conversationState. */
   activeConversationId: string;
+  /**
+   * The conversation the mutable commercial fields (product, vehicle,
+   * delivery, payment) were scoped to — resolved by commercial-evidence
+   * recency, not raw last-entry recency. Usually equal to
+   * activeConversationId, but can differ when the active conversation's
+   * most recent activity isn't commercial (see resolve-commercial-context.ts).
+   */
+  commercialContextConversationId: string;
   slaHoursByNextAction: Partial<Record<NextActionType, number>>;
   derivedAt: Date;
 }

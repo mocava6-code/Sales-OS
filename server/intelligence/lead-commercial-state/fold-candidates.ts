@@ -42,3 +42,27 @@ export function foldMutableFieldCandidates<T>(
 
   return { value: winner.value, confidence: winner.confidence, evidence: winner.evidence, reasoning: winner.reasoning };
 }
+
+// Transient fields (paymentStatus, requestedDeliveryAt) describe the state
+// of a specific transaction attempt, not a durable customer trait — unlike
+// productInterest/vehicleModel/deliveryLocation, a stale value from a
+// DIFFERENT conversation is not "enrichment," it's a category error (a
+// payment request tied to one inquiry has no bearing on a separate,
+// unrelated one). So there is deliberately no historical fallback here: if
+// the current commercial-context conversation has no candidate for the
+// field, the field resolves to null rather than reaching into another
+// conversation's history.
+export function foldTransientFieldCandidates<T>(
+  candidates: FieldCandidate<T>[],
+  commercialContextConversationId: string,
+): FoldedField<T> | null {
+  const scoped = candidates.filter((c) => c.conversationId === commercialContextConversationId);
+  if (scoped.length === 0) return null;
+
+  const [winner] = scoped.slice().sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return b.occurredAt.getTime() - a.occurredAt.getTime();
+  });
+
+  return { value: winner.value, confidence: winner.confidence, evidence: winner.evidence, reasoning: winner.reasoning };
+}

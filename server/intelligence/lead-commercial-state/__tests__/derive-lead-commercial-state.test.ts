@@ -115,3 +115,78 @@ describe("deriveLeadCommercialState — multi-conversation precedence", () => {
     expect(state.metadata.activeConversationId).toBe("conv-1");
   });
 });
+
+describe("deriveLeadCommercialState — cross-conversation commercial contamination (production regression, lead 9b64e8a2)", () => {
+  // Reproduces the EXACT mechanism found in production: a MANUAL_ENTRY
+  // conversation contains an old test commercial exchange (payment
+  // requested for a "Hilux TRAVO 2026" kit), then later receives
+  // unrelated, non-commercial personal messages that bump its
+  // lastEntryAt ahead of a separate, genuinely active WhatsApp
+  // conversation carrying a real, distinct customer inquiry (Hilux 2022,
+  // never mentions payment). Before the fix, resolveActiveConversation's
+  // raw last-entry recency made the stale conversation win "active"
+  // status, so its dormant AWAITING_PAYMENT and wrong vehicleYear (2026)
+  // silently became the lead's current commercial state.
+  function manualEntryConversationMessages(): NormalizedMessageForExtraction[] {
+    return [
+      { id: "me1", conversationId: "conv-manual", direction: "INBOUND", content: "tienes kit de hilux travo 2026?", occurredAt: new Date("2026-07-24T22:24:50.940Z") },
+      { id: "me2", conversationId: "conv-manual", direction: "OUTBOUND", content: "si, los desea?", occurredAt: new Date("2026-07-24T22:24:50.941Z") },
+      { id: "me3", conversationId: "conv-manual", direction: "OUTBOUND", content: "ok aqui le paso el numero de cuenta para que realice el pago", occurredAt: new Date("2026-07-24T22:24:50.945Z") },
+      // Later, unrelated personal chatter — no commercial content, but
+      // it's the newest activity on the lead by raw timestamp.
+      { id: "me4", conversationId: "conv-manual", direction: "INBOUND", content: "Marii, elige", occurredAt: new Date("2026-08-12T17:18:31.000Z") },
+      { id: "me5", conversationId: "conv-manual", direction: "INBOUND", content: "Ponte la camiseta y elige que almorzar!!", occurredAt: new Date("2026-08-12T17:26:46.000Z") },
+      { id: "me6", conversationId: "conv-manual", direction: "INBOUND", content: "no hacer caso", occurredAt: new Date("2026-08-12T19:36:34.000Z") },
+    ];
+  }
+
+  function whatsappConversationMessages(): NormalizedMessageForExtraction[] {
+    return [
+      { id: "w1", conversationId: "conv-whatsapp", direction: "INBOUND", content: "Hola, tengo una Toyota Hilux 2022 y quiero comprar el body kit TRAVO. ¿Cuánto cuesta?", occurredAt: new Date("2026-08-11T13:48:17.000Z") },
+    ];
+  }
+
+  function contaminationConversations(): ConversationSummaryForActiveResolution[] {
+    return [
+      { id: "conv-manual", status: "NEEDS_REPLY", lastEntryAt: new Date("2026-08-12T19:36:34.000Z"), lastEntryDirection: "INBOUND" },
+      { id: "conv-whatsapp", status: "NEEDS_REPLY", lastEntryAt: new Date("2026-08-11T13:48:17.000Z"), lastEntryDirection: "INBOUND" },
+    ];
+  }
+
+  it("scopes mutable commercial fields to the conversation with the freshest commercial evidence, not the freshest entry of any kind", () => {
+    const state = deriveLeadCommercialState(
+      "lead-9b64e8a2",
+      [...manualEntryConversationMessages(), ...whatsappConversationMessages()],
+      contaminationConversations(),
+      buildDependencies(),
+    );
+
+    expect(state.vehicleModel.value).toBe("Hilux");
+    expect(state.vehicleYear.value).toBe(2022); // the real customer's stated year, not the stale "travo 2026" test text
+    expect(state.metadata.commercialContextConversationId).toBe("conv-whatsapp");
+  });
+
+  it("does not resurrect a dormant historical payment request onto an unrelated, currently-active inquiry", () => {
+    const state = deriveLeadCommercialState(
+      "lead-9b64e8a2",
+      [...manualEntryConversationMessages(), ...whatsappConversationMessages()],
+      contaminationConversations(),
+      buildDependencies(),
+    );
+
+    expect(state.paymentStatus.value).toBeNull();
+    expect(state.nextAction.value).not.toBe("CONFIRM_PAYMENT");
+  });
+
+  it("still reports the raw active conversation (for lastContactAt/conversationState) as the most recently touched one, independent of commercial context", () => {
+    const state = deriveLeadCommercialState(
+      "lead-9b64e8a2",
+      [...manualEntryConversationMessages(), ...whatsappConversationMessages()],
+      contaminationConversations(),
+      buildDependencies(),
+    );
+
+    expect(state.metadata.activeConversationId).toBe("conv-manual");
+    expect(state.lastContactDirection.value).toBe("INBOUND");
+  });
+});

@@ -19,6 +19,7 @@ function workedExampleState(): LeadCommercialStateDTO {
     nextAction: { value: "CONFIRM_PAYMENT", confidence: 1, evidenceExcerpt: null, reasoning: "The advisor requested payment and no confirmation has been observed yet." },
     followUpDueAt: { value: "2026-07-24T18:25:00.000Z", confidence: 1, evidenceExcerpt: null, reasoning: "4h SLA for CONFIRM_PAYMENT, applied to the last contact at 2026-07-24T14:25:00.000Z." },
     activeConversationId: "conv-1",
+    commercialContextConversationId: "conv-1",
     derivedAt: "2026-07-24T18:30:00.000Z",
   };
 }
