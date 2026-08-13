@@ -6,6 +6,86 @@ import { classifyDeterministically } from "@/server/intelligence/response-action
 import { classifyConversationActionWithAI } from "@/server/intelligence/response-action/ai-classifier";
 import type { ActionClassificationResult, ActionState, ActionStateSource, ConversationActionContext } from "@/server/intelligence/response-action/types";
 
+// --- Conversation selection (cross-conversation contamination fix) ----------
+//
+// A lead can have multiple conversations (manual entry, historical import,
+// live WhatsApp thread — separate creation paths that don't dedupe against
+// each other). Picking "whichever conversation was touched most recently,
+// regardless of content" to represent the lead is wrong: confirmed in
+// production, a personal/off-topic conversation receiving new messages
+// silently hid a genuinely actionable WhatsApp thread behind it, because
+// the newer conversation's raw timestamp won even though it had nothing to
+// do with the customer's actual open request. Same root cause as
+// server/intelligence/lead-commercial-state/resolve-commercial-context.ts's
+// fix for commercial-field extraction — this is the action-state
+// equivalent: rank by what the conversation actually needs, not by when it
+// was last touched.
+
+const ACTION_STATE_URGENCY: Record<ActionState, number> = {
+  REPLY_REQUIRED: 0,
+  UNCERTAIN: 1,
+  FOLLOW_UP_REQUIRED: 2,
+  WAITING_ON_CUSTOMER: 3,
+  NO_ACTION_REQUIRED: 4,
+};
+
+export interface RankableConversation {
+  status: "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED";
+  lastEntryAt: Date;
+}
+
+/**
+ * Picks which of a lead's conversations should represent it for
+ * actionState purposes. Prefers non-CLOSED conversations; among those, the
+ * most urgent resolved actionState wins (REPLY_REQUIRED first,
+ * NO_ACTION_REQUIRED last — UNCERTAIN ranks second, deliberately above
+ * FOLLOW_UP_REQUIRED/WAITING_ON_CUSTOMER, since an uncertain conversation
+ * needs human review and must never be silently outranked by an
+ * already-handled one); ties broken by recency.
+ */
+export function selectMostActionableConversation<C extends RankableConversation>(
+  conversations: C[],
+  resolveState: (conversation: C) => ActionState,
+): C | null {
+  if (conversations.length === 0) return null;
+  const nonClosed = conversations.filter((c) => c.status !== "CLOSED");
+  const pool = nonClosed.length > 0 ? nonClosed : conversations;
+
+  return pool
+    .slice()
+    .sort((a, b) => {
+      const urgencyDelta = ACTION_STATE_URGENCY[resolveState(a)] - ACTION_STATE_URGENCY[resolveState(b)];
+      if (urgencyDelta !== 0) return urgencyDelta;
+      return b.lastEntryAt.getTime() - a.lastEntryAt.getTime();
+    })[0];
+}
+
+const STATUS_URGENCY: Record<RankableConversation["status"], number> = {
+  NEEDS_REPLY: 0,
+  WAITING_ON_CUSTOMER: 1,
+  CLOSED: 2,
+};
+
+/**
+ * A cheaper variant for read paths that don't fetch entries/actionState
+ * (e.g. Kori queries with no actionState/needsReply filter) — ranks by the
+ * conversation's own status only (NEEDS_REPLY beats WAITING_ON_CUSTOMER
+ * beats CLOSED), tie-broken by recency. Still fixes the same contamination:
+ * a lead's `needsReply` boolean must reflect its own open conversation
+ * needing a reply, never get masked by a newer but already-closed or
+ * waiting-on-customer one.
+ */
+export function selectMostRelevantConversationByStatus<C extends RankableConversation>(conversations: C[]): C | null {
+  if (conversations.length === 0) return null;
+  return conversations
+    .slice()
+    .sort((a, b) => {
+      const delta = STATUS_URGENCY[a.status] - STATUS_URGENCY[b.status];
+      if (delta !== 0) return delta;
+      return b.lastEntryAt.getTime() - a.lastEntryAt.getTime();
+    })[0];
+}
+
 // Kori Semantic Response Intelligence v0 — the ONE place Today, Kori, and
 // any future analytics consumer must go through to learn "does this
 // conversation actually need an advisor action." Never re-derive this from
@@ -351,6 +431,9 @@ function bucketFor(groups: TodayActionGroups, actionState: ActionState): TodayAc
  * a second, independently-defined notion of "needs action." A lead with no
  * conversation at all is bucketed as `uncertain` (never silently dropped).
  */
+/** A lead very rarely has more than a handful of conversations at pilot scale — bounded defensively, not a correctness cap. */
+const MAX_CONVERSATIONS_PER_LEAD_FOR_ACTION_STATE = 20;
+
 export async function groupLeadsByOperationalActionState(businessId: string, db: PrismaClientOrTransaction = prisma): Promise<TodayActionGroups> {
   const leads = await db.lead.findMany({
     where: { businessId },
@@ -360,7 +443,7 @@ export async function groupLeadsByOperationalActionState(businessId: string, db:
       followUps: { select: { status: true, dueAt: true } },
       conversations: {
         orderBy: { lastEntryAt: "desc" },
-        take: 1,
+        take: MAX_CONVERSATIONS_PER_LEAD_FOR_ACTION_STATE,
         include: {
           entries: { orderBy: { occurredAt: "desc" }, take: RECENT_ENTRIES_WINDOW },
           actionState: true,
@@ -372,38 +455,47 @@ export async function groupLeadsByOperationalActionState(businessId: string, db:
   const groups = emptyTodayActionGroups();
 
   for (const lead of leads) {
-    const conversation = lead.conversations[0];
-    if (!conversation) {
+    if (lead.conversations.length === 0) {
       groups.uncertain.push({ leadId: lead.id, conversationId: null, actionState: "UNCERTAIN", reasonCode: "UNCERTAIN_CONTEXT" });
       continue;
     }
 
-    const context = toConversationActionContext({
-      id: conversation.id,
-      leadId: lead.id,
-      status: conversation.status,
-      lastEntryAt: conversation.lastEntryAt,
-      lastEntryDirection: conversation.lastEntryDirection,
-      entries: [...conversation.entries].reverse(),
-      lead: { commercialProfile: lead.commercialProfile, followUps: lead.followUps },
-    });
+    // Resolve every one of the lead's conversations, then surface whichever
+    // is most actionable — never just the one touched most recently,
+    // regardless of content (see selectMostActionableConversation's doc
+    // comment for the production case this fixes).
+    const resolvedByConversationId = new Map<string, ActionClassificationResult>();
+    for (const conversation of lead.conversations) {
+      const context = toConversationActionContext({
+        id: conversation.id,
+        leadId: lead.id,
+        status: conversation.status,
+        lastEntryAt: conversation.lastEntryAt,
+        lastEntryDirection: conversation.lastEntryDirection,
+        entries: [...conversation.entries].reverse(),
+        lead: { commercialProfile: lead.commercialProfile, followUps: lead.followUps },
+      });
 
-    const stored: StoredActionStateForResolution | null = conversation.actionState
-      ? {
-          actionState: conversation.actionState.actionState,
-          reasonCode: conversation.actionState.reasonCode,
-          confidence: conversation.actionState.confidence,
-          reasoning: conversation.actionState.reasoning,
-          evidenceEntryIds: conversation.actionState.evidenceEntryIds,
-          recommendedAction: conversation.actionState.recommendedAction,
-          source: conversation.actionState.source,
-          humanOverride: conversation.actionState.humanOverride,
-          basedOnLastEntryAt: conversation.actionState.basedOnLastEntryAt,
-        }
-      : null;
+      const stored: StoredActionStateForResolution | null = conversation.actionState
+        ? {
+            actionState: conversation.actionState.actionState,
+            reasonCode: conversation.actionState.reasonCode,
+            confidence: conversation.actionState.confidence,
+            reasoning: conversation.actionState.reasoning,
+            evidenceEntryIds: conversation.actionState.evidenceEntryIds,
+            recommendedAction: conversation.actionState.recommendedAction,
+            source: conversation.actionState.source,
+            humanOverride: conversation.actionState.humanOverride,
+            basedOnLastEntryAt: conversation.actionState.basedOnLastEntryAt,
+          }
+        : null;
 
-    const resolved = resolveOperationalActionState(conversation.lastEntryAt, stored, context);
-    bucketFor(groups, resolved.actionState).push({ leadId: lead.id, conversationId: conversation.id, actionState: resolved.actionState, reasonCode: resolved.reasonCode });
+      resolvedByConversationId.set(conversation.id, resolveOperationalActionState(conversation.lastEntryAt, stored, context));
+    }
+
+    const mostActionable = selectMostActionableConversation(lead.conversations, (c) => resolvedByConversationId.get(c.id)!.actionState);
+    const resolved = resolvedByConversationId.get(mostActionable!.id)!;
+    bucketFor(groups, resolved.actionState).push({ leadId: lead.id, conversationId: mostActionable!.id, actionState: resolved.actionState, reasonCode: resolved.reasonCode });
   }
 
   return groups;

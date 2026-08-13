@@ -1,7 +1,13 @@
 import { prisma } from "@/server/db/client";
 import type { Prisma } from "@/server/db/generated/client";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
-import { resolveOperationalActionState, toConversationActionContext, type StoredActionStateForResolution } from "@/server/services/conversation-action-state-service";
+import {
+  resolveOperationalActionState,
+  selectMostActionableConversation,
+  selectMostRelevantConversationByStatus,
+  toConversationActionContext,
+  type StoredActionStateForResolution,
+} from "@/server/services/conversation-action-state-service";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
 import { parseKoriQuerySpec, type KoriLeadRow, type KoriQueryResult, type KoriQuerySpec } from "./query-spec";
 
@@ -54,18 +60,20 @@ function buildLeadFilterConditions(
 
   // needsReply is deliberately NOT applied here. "Some conversation has
   // status NEEDS_REPLY" (a Prisma relation filter) is a different question
-  // than "the lead's own most-recently-touched conversation has status
+  // than "the lead's own most-relevant conversation has status
   // NEEDS_REPLY" (what toLeadRow displays as row.needsReply) — a Lead with
   // multiple Conversations (manual entry, historical import, and a live
   // WhatsApp thread are all separate creation paths that don't dedupe
   // against each other) can satisfy the former via an OLDER conversation
-  // while its NEWEST conversation has a different status, producing a row
-  // whose displayed needsReply contradicts the filter that selected it —
-  // confirmed against a real production result. needsReply is instead
-  // applied as a post-fetch filter on the same top-1-by-lastEntryAt
-  // conversation toLeadRow already uses — see
-  // fetchNeedsReplyFilteredLeadRows, shared by executeCountLeads,
-  // executeListLeads, and executeFollowUpQueue so they can never disagree.
+  // while the conversation that actually represents the lead has a
+  // different status, producing a row whose displayed needsReply
+  // contradicts the filter that selected it — confirmed against a real
+  // production result. needsReply is instead applied as a post-fetch
+  // filter using toLeadRow's own selection (selectMostRelevantConversationByStatus,
+  // never just the most-recently-touched conversation regardless of
+  // content — see its doc comment) — see fetchActionAwareLeadRows, shared
+  // by executeCountLeads, executeListLeads, and executeFollowUpQueue so
+  // they can never disagree.
   const conversationsFilter: { some?: Prisma.ConversationWhereInput; none?: Prisma.ConversationWhereInput } = {};
   if (filters.lastActivityBefore || filters.lastActivityAfter) {
     const lastEntryAt: Prisma.DateTimeFilter = {};
@@ -97,9 +105,12 @@ function buildLeadWhere(businessId: string, filters: LeadFilters): Prisma.LeadWh
   return { businessId, ...buildLeadFilterConditions(filters) };
 }
 
+/** A lead very rarely has more than a handful of conversations at pilot scale — bounded defensively, not a correctness cap. */
+const MAX_CONVERSATIONS_PER_LEAD = 20;
+
 const LEAD_ROW_INCLUDE = {
   commercialProfile: true,
-  conversations: { orderBy: { lastEntryAt: "desc" as const }, take: 1 },
+  conversations: { orderBy: { lastEntryAt: "desc" as const }, take: MAX_CONVERSATIONS_PER_LEAD },
   followUps: { where: { status: { not: "DONE" as const } }, orderBy: { dueAt: "asc" as const }, take: 1 },
 };
 
@@ -110,12 +121,14 @@ type LeadForRow = {
   status: string;
   assignedToUserId: string | null;
   commercialProfile: { vehicleBrand: string | null; vehicleModel: string | null; productInterest: string | null; customerType: string | null } | null;
-  conversations: { status: string; lastEntryAt: Date }[];
+  conversations: { status: "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED"; lastEntryAt: Date }[];
   followUps: { dueAt: Date }[];
 };
 
 function toLeadRow(lead: LeadForRow): KoriLeadRow {
-  const activeConversation = lead.conversations[0] ?? null;
+  // Never just conversations[0] (most-recently-touched, regardless of
+  // content) — see selectMostRelevantConversationByStatus's doc comment.
+  const activeConversation = selectMostRelevantConversationByStatus(lead.conversations);
   const nextFollowUp = lead.followUps[0] ?? null;
   return {
     leadId: lead.id,
@@ -144,7 +157,7 @@ const ACTION_AWARE_LEAD_INCLUDE = {
   followUps: { select: { status: true, dueAt: true } },
   conversations: {
     orderBy: { lastEntryAt: "desc" as const },
-    take: 1,
+    take: MAX_CONVERSATIONS_PER_LEAD,
     include: {
       entries: { orderBy: { occurredAt: "desc" as const }, take: ACTION_AWARE_ENTRIES_WINDOW },
       actionState: true,
@@ -179,16 +192,67 @@ type LeadForActionAwareRow = {
   }[];
 };
 
+function resolveActionStateForConversation(lead: LeadForActionAwareRow, conversation: LeadForActionAwareRow["conversations"][number]) {
+  const context = toConversationActionContext({
+    id: conversation.id,
+    leadId: lead.id,
+    status: conversation.status as "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED",
+    lastEntryAt: conversation.lastEntryAt,
+    lastEntryDirection: conversation.lastEntryDirection as "INBOUND" | "OUTBOUND",
+    entries: [...conversation.entries]
+      .reverse()
+      .map((e) => ({ id: e.id, direction: e.direction as "INBOUND" | "OUTBOUND", content: e.content, occurredAt: e.occurredAt })),
+    lead: {
+      commercialProfile: lead.commercialProfile
+        ? { nextAction: lead.commercialProfile.nextAction as "ANSWER_QUESTION" | "CONFIRM_PAYMENT" | "SCHEDULE_DELIVERY" | "SEND_QUOTE" | "FOLLOW_UP" | "NONE" | null }
+        : null,
+      followUps: lead.followUps as { status: "PENDING" | "DONE" | "SNOOZED"; dueAt: Date }[],
+    },
+  });
+
+  const stored: StoredActionStateForResolution | null = conversation.actionState
+    ? {
+        actionState: conversation.actionState.actionState as StoredActionStateForResolution["actionState"],
+        reasonCode: conversation.actionState.reasonCode,
+        confidence: conversation.actionState.confidence,
+        reasoning: conversation.actionState.reasoning,
+        evidenceEntryIds: conversation.actionState.evidenceEntryIds,
+        recommendedAction: conversation.actionState.recommendedAction,
+        source: conversation.actionState.source as StoredActionStateForResolution["source"],
+        humanOverride: conversation.actionState.humanOverride,
+        basedOnLastEntryAt: conversation.actionState.basedOnLastEntryAt,
+      }
+    : null;
+
+  return resolveOperationalActionState(conversation.lastEntryAt, stored, context);
+}
+
 /**
  * The canonical Semantic Response Intelligence read path — resolves
  * actionState through resolveOperationalActionState (the same function
  * Today's grouping service uses), never a separate/independent
- * definition. Also reports needsReply from the SAME active conversation,
- * so the two fields on one row can never disagree about which
- * conversation they're describing.
+ * definition. Resolves EVERY one of the lead's conversations (never just
+ * conversations[0] — see selectMostActionableConversation's doc comment
+ * for the production case where that hid a genuinely actionable WhatsApp
+ * thread).
+ *
+ * needsReply and actionState deliberately answer two different questions
+ * and are allowed to point at two different conversations: needsReply is
+ * the raw "does this lead have an open conversation whose own status is
+ * NEEDS_REPLY" (selectMostRelevantConversationByStatus — a simple,
+ * unambiguous status ranking), while actionState is the semantic "what's
+ * the most urgent thing going on" (selectMostActionableConversation —
+ * ranked by resolved actionState, which can tie on UNCERTAIN when a
+ * conversation has no message content to classify). Forcing both onto the
+ * SAME selected conversation made needsReply inherit actionState's ties —
+ * a lead with a real open NEEDS_REPLY conversation could report
+ * needsReply=false just because a content-less newer conversation won an
+ * UNCERTAIN tie-break on recency. lastActivityAt reports the lead's own
+ * most-recently-touched conversation (conversations are fetched newest
+ * first) — a neutral "when was this lead last touched" fact, independent
+ * of either ranking.
  */
 function toActionAwareLeadRow(lead: LeadForActionAwareRow): KoriLeadRow {
-  const activeConversation = lead.conversations[0] ?? null;
   const pendingFollowUps = lead.followUps.filter((f) => f.status === "PENDING");
   const nextFollowUp = pendingFollowUps.length > 0 ? pendingFollowUps.reduce((earliest, f) => (f.dueAt < earliest.dueAt ? f : earliest)) : null;
 
@@ -200,54 +264,36 @@ function toActionAwareLeadRow(lead: LeadForActionAwareRow): KoriLeadRow {
     vehicleModel: lead.commercialProfile?.vehicleModel ?? null,
     productInterest: lead.commercialProfile?.productInterest ?? null,
     customerType: (lead.commercialProfile?.customerType as KoriLeadRow["customerType"]) ?? null,
-    needsReply: activeConversation?.status === "NEEDS_REPLY",
+    needsReply: false,
     actionState: "UNCERTAIN",
     nextFollowUpDueAt: nextFollowUp ? nextFollowUp.dueAt.toISOString() : null,
-    lastActivityAt: activeConversation ? activeConversation.lastEntryAt.toISOString() : null,
+    lastActivityAt: lead.conversations[0] ? lead.conversations[0].lastEntryAt.toISOString() : null,
   };
 
-  if (!activeConversation) return baseRow;
+  if (lead.conversations.length === 0) return baseRow;
 
-  const context = toConversationActionContext({
-    id: activeConversation.id,
-    leadId: lead.id,
-    status: activeConversation.status as "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED",
-    lastEntryAt: activeConversation.lastEntryAt,
-    lastEntryDirection: activeConversation.lastEntryDirection as "INBOUND" | "OUTBOUND",
-    entries: [...activeConversation.entries]
-      .reverse()
-      .map((e) => ({ id: e.id, direction: e.direction as "INBOUND" | "OUTBOUND", content: e.content, occurredAt: e.occurredAt })),
-    lead: {
-      commercialProfile: lead.commercialProfile
-        ? { nextAction: lead.commercialProfile.nextAction as "ANSWER_QUESTION" | "CONFIRM_PAYMENT" | "SCHEDULE_DELIVERY" | "SEND_QUOTE" | "FOLLOW_UP" | "NONE" | null }
-        : null,
-      followUps: lead.followUps as { status: "PENDING" | "DONE" | "SNOOZED"; dueAt: Date }[],
-    },
-  });
+  const conversationsForRanking = lead.conversations.map((c) => ({ id: c.id, status: c.status as "NEEDS_REPLY" | "WAITING_ON_CUSTOMER" | "CLOSED", lastEntryAt: c.lastEntryAt }));
 
-  const stored: StoredActionStateForResolution | null = activeConversation.actionState
-    ? {
-        actionState: activeConversation.actionState.actionState as StoredActionStateForResolution["actionState"],
-        reasonCode: activeConversation.actionState.reasonCode,
-        confidence: activeConversation.actionState.confidence,
-        reasoning: activeConversation.actionState.reasoning,
-        evidenceEntryIds: activeConversation.actionState.evidenceEntryIds,
-        recommendedAction: activeConversation.actionState.recommendedAction,
-        source: activeConversation.actionState.source as StoredActionStateForResolution["source"],
-        humanOverride: activeConversation.actionState.humanOverride,
-        basedOnLastEntryAt: activeConversation.actionState.basedOnLastEntryAt,
-      }
-    : null;
+  const needsReplyConversation = selectMostRelevantConversationByStatus(conversationsForRanking)!;
 
-  const resolved = resolveOperationalActionState(activeConversation.lastEntryAt, stored, context);
-  return { ...baseRow, actionState: resolved.actionState };
+  const resolvedByConversationId = new Map(
+    lead.conversations.map((c) => [c.id, resolveActionStateForConversation(lead, c)] as const),
+  );
+  const actionStateConversation = selectMostActionableConversation(conversationsForRanking, (c) => resolvedByConversationId.get(c.id)!.actionState)!;
+  const resolved = resolvedByConversationId.get(actionStateConversation.id)!;
+
+  return {
+    ...baseRow,
+    needsReply: needsReplyConversation.status === "NEEDS_REPLY",
+    actionState: resolved.actionState,
+  };
 }
 
 /**
- * needsReply/actionState-aware fetch — mirrors fetchNeedsReplyFilteredLeadRows's
- * shape but through toActionAwareLeadRow, so a query that filters by
- * EITHER or BOTH fields reads them off the exact same resolved row (never
- * two independently-computed answers about the same lead).
+ * needsReply/actionState-aware fetch — routes both fields through
+ * toActionAwareLeadRow, so a query that filters by EITHER or BOTH reads
+ * them off the exact same resolved row (never two independently-computed
+ * answers about the same lead).
  */
 async function fetchActionAwareLeadRows(
   businessId: string,
@@ -390,10 +436,10 @@ async function executeFollowUpQueue(businessId: string, spec: KoriQuerySpec, db:
   }
 
   if (f?.needsReply !== undefined) {
-    // Same needsReply post-filter as fetchNeedsReplyFilteredLeadRows,
-    // applied to the lead each pending follow-up belongs to — the WHERE
-    // clause above (via buildLeadFilterConditions) no longer expresses
-    // needsReply at all, for the same reason it doesn't for Lead queries.
+    // Same needsReply post-filter toLeadRow uses elsewhere, applied to the
+    // lead each pending follow-up belongs to — the WHERE clause above (via
+    // buildLeadFilterConditions) no longer expresses needsReply at all,
+    // for the same reason it doesn't for Lead queries.
     const followUps = await db.followUp.findMany({
       where: followUpWhere,
       orderBy: { dueAt: "asc" },

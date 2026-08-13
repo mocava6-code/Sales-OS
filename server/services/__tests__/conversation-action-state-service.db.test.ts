@@ -162,4 +162,37 @@ describe.skipIf(!shouldRunDbTests)("conversation-action-state-service (RUN_DB_TE
       await db!.lead.delete({ where: { id: noConvLead.id } });
     }
   });
+
+  it("groupLeadsByOperationalActionState surfaces a genuinely actionable conversation even when a newer, unrelated conversation on the same lead is only waiting on the customer (production regression)", async () => {
+    const t1 = new Date("2026-08-01T00:00:00Z");
+    await addEntry(fixture.conversationId, "INBOUND", "¿Cuánto cuesta el envío?", t1);
+    await db!.conversation.update({ where: { id: fixture.conversationId }, data: { lastEntryAt: t1, lastEntryDirection: "INBOUND" } });
+
+    // A second, newer conversation on the SAME lead whose advisor already
+    // replied — must not hide the first conversation's unanswered question.
+    const newerConversation = await db!.conversation.create({
+      data: {
+        businessId: fixture.businessId,
+        leadId: fixture.leadId,
+        source: "MANUAL_PASTE",
+        status: "WAITING_ON_CUSTOMER",
+        lastEntryAt: new Date("2026-08-02T00:00:00Z"),
+        lastEntryDirection: "OUTBOUND",
+        createdByUserId: fixture.userId,
+      },
+    });
+    try {
+      await addEntry(newerConversation.id, "OUTBOUND", "cualquier consulta me avisas", new Date("2026-08-02T00:00:00Z"));
+
+      const groups = await groupLeadsByOperationalActionState(fixture.businessId, db!);
+      const entry = groups.replyRequired.find((e) => e.leadId === fixture.leadId);
+      expect(entry).toBeDefined();
+      expect(entry?.conversationId).toBe(fixture.conversationId);
+      expect(groups.waitingOnCustomer.map((e) => e.leadId)).not.toContain(fixture.leadId);
+    } finally {
+      await db!.conversationActionState.deleteMany({ where: { conversationId: newerConversation.id } });
+      await db!.conversationEntry.deleteMany({ where: { conversationId: newerConversation.id } });
+      await db!.conversation.delete({ where: { id: newerConversation.id } });
+    }
+  });
 });

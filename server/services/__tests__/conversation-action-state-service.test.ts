@@ -5,8 +5,15 @@
 // resolveOperationalActionState's precedence rules specifically.
 
 import { describe, expect, it } from "vitest";
-import { resolveOperationalActionState, toConversationActionContext, type StoredActionStateForResolution } from "../conversation-action-state-service";
-import type { ConversationActionContext } from "@/server/intelligence/response-action/types";
+import {
+  resolveOperationalActionState,
+  selectMostActionableConversation,
+  selectMostRelevantConversationByStatus,
+  toConversationActionContext,
+  type RankableConversation,
+  type StoredActionStateForResolution,
+} from "../conversation-action-state-service";
+import type { ActionState, ConversationActionContext } from "@/server/intelligence/response-action/types";
 
 function liveContext(overrides: Partial<ConversationActionContext> = {}): ConversationActionContext {
   return {
@@ -134,5 +141,98 @@ describe("toConversationActionContext", () => {
       lead: { commercialProfile: null, followUps: [] },
     });
     expect(withoutProfile.structural.leadNextAction).toBeNull();
+  });
+});
+
+interface TestConversation extends RankableConversation {
+  id: string;
+}
+
+function conv(id: string, status: RankableConversation["status"], lastEntryAt: string): TestConversation {
+  return { id, status, lastEntryAt: new Date(lastEntryAt) };
+}
+
+describe("selectMostRelevantConversationByStatus", () => {
+  it("returns null for an empty list", () => {
+    expect(selectMostRelevantConversationByStatus([])).toBeNull();
+  });
+
+  it("THE CONTAMINATION FIX: a NEEDS_REPLY conversation wins even when an unrelated WAITING_ON_CUSTOMER conversation is more recent", () => {
+    const older = conv("a", "NEEDS_REPLY", "2026-01-01T00:00:00Z");
+    const newer = conv("b", "WAITING_ON_CUSTOMER", "2026-01-02T00:00:00Z");
+
+    expect(selectMostRelevantConversationByStatus([older, newer])?.id).toBe("a");
+  });
+
+  it("WAITING_ON_CUSTOMER wins over CLOSED regardless of recency", () => {
+    const closed = conv("a", "CLOSED", "2026-01-05T00:00:00Z");
+    const waiting = conv("b", "WAITING_ON_CUSTOMER", "2026-01-01T00:00:00Z");
+
+    expect(selectMostRelevantConversationByStatus([closed, waiting])?.id).toBe("b");
+  });
+
+  it("breaks a same-status tie by recency", () => {
+    const older = conv("a", "NEEDS_REPLY", "2026-01-01T00:00:00Z");
+    const newer = conv("b", "NEEDS_REPLY", "2026-01-05T00:00:00Z");
+
+    expect(selectMostRelevantConversationByStatus([older, newer])?.id).toBe("b");
+  });
+});
+
+describe("selectMostActionableConversation", () => {
+  function resolverFrom(states: Record<string, ActionState>) {
+    return (c: TestConversation) => states[c.id];
+  }
+
+  it("returns null for an empty list", () => {
+    expect(selectMostActionableConversation([], () => "UNCERTAIN")).toBeNull();
+  });
+
+  it("THE CONTAMINATION FIX: REPLY_REQUIRED wins even when a NO_ACTION_REQUIRED conversation is more recent", () => {
+    const urgent = conv("a", "NEEDS_REPLY", "2026-01-01T00:00:00Z");
+    const stale = conv("b", "NEEDS_REPLY", "2026-01-10T00:00:00Z");
+
+    const result = selectMostActionableConversation([urgent, stale], resolverFrom({ a: "REPLY_REQUIRED", b: "NO_ACTION_REQUIRED" }));
+
+    expect(result?.id).toBe("a");
+  });
+
+  it("prefers non-CLOSED conversations over CLOSED ones regardless of urgency ranking", () => {
+    const closedUrgent = conv("a", "CLOSED", "2026-01-10T00:00:00Z");
+    const openLessUrgent = conv("b", "WAITING_ON_CUSTOMER", "2026-01-01T00:00:00Z");
+
+    const result = selectMostActionableConversation(
+      [closedUrgent, openLessUrgent],
+      resolverFrom({ a: "REPLY_REQUIRED", b: "WAITING_ON_CUSTOMER" }),
+    );
+
+    expect(result?.id).toBe("b");
+  });
+
+  it("falls back to the CLOSED pool when every conversation is CLOSED", () => {
+    const a = conv("a", "CLOSED", "2026-01-01T00:00:00Z");
+    const b = conv("b", "CLOSED", "2026-01-05T00:00:00Z");
+
+    const result = selectMostActionableConversation([a, b], resolverFrom({ a: "NO_ACTION_REQUIRED", b: "NO_ACTION_REQUIRED" }));
+
+    expect(result?.id).toBe("b"); // recency tie-break among the only pool available
+  });
+
+  it("ranks UNCERTAIN above FOLLOW_UP_REQUIRED and WAITING_ON_CUSTOMER — an unreviewed case must not hide behind an already-handled one", () => {
+    const uncertain = conv("a", "NEEDS_REPLY", "2026-01-01T00:00:00Z");
+    const followUp = conv("b", "WAITING_ON_CUSTOMER", "2026-01-05T00:00:00Z");
+
+    const result = selectMostActionableConversation([uncertain, followUp], resolverFrom({ a: "UNCERTAIN", b: "FOLLOW_UP_REQUIRED" }));
+
+    expect(result?.id).toBe("a");
+  });
+
+  it("breaks a same-urgency tie by recency", () => {
+    const older = conv("a", "NEEDS_REPLY", "2026-01-01T00:00:00Z");
+    const newer = conv("b", "NEEDS_REPLY", "2026-01-05T00:00:00Z");
+
+    const result = selectMostActionableConversation([older, newer], resolverFrom({ a: "REPLY_REQUIRED", b: "REPLY_REQUIRED" }));
+
+    expect(result?.id).toBe("b");
   });
 });
