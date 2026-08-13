@@ -53,7 +53,7 @@ describe("buildLeadCommercialState — worked example, through the read-model la
 
     expect(dto.productInterest.confidence).toBeGreaterThan(0);
     expect(dto.productInterest.evidenceExcerpt).toContain("hilux");
-    expect(dto.nextAction.reasoning).toMatch(/payment/i);
+    expect(dto.nextAction.reasoning).toMatch(/pago/i);
   });
 
   it("uses the business's configured timezone, not a hardcoded one", () => {

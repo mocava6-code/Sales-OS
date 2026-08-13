@@ -63,7 +63,7 @@ export const deliveryLocationExtractor: FieldExtractor<string> = {
       const gazetteerMatch = Object.entries(KNOWN_PERU_LOCATIONS).find(([key]) => normalized.includes(key));
       if (gazetteerMatch) {
         candidates.push(
-          toCandidate(gazetteerMatch[1], GAZETTEER_CONFIDENCE, message, "Matched against a known Peru district/city gazetteer."),
+          toCandidate(gazetteerMatch[1], GAZETTEER_CONFIDENCE, message, "Coincide con un distrito/ciudad conocido del Perú."),
         );
         continue; // gazetteer hit is strictly better than the generic pattern for the same message — don't double-candidate it
       }
@@ -74,7 +74,7 @@ export const deliveryLocationExtractor: FieldExtractor<string> = {
         const raw = patternMatch[1].trim();
         if (raw.length > 0) {
           candidates.push(
-            toCandidate(titleCase(raw), PATTERN_FALLBACK_CONFIDENCE, message, "Matched a generic 'delivery to X' phrase — X is not a recognized place name."),
+            toCandidate(titleCase(raw), PATTERN_FALLBACK_CONFIDENCE, message, "Coincide con una frase genérica de 'envío a X' — X no es un lugar reconocido."),
           );
         }
       }

@@ -116,7 +116,7 @@ export function createRequestedDeliveryAtExtractor(timezone: string): FieldExtra
           conversationId: message.conversationId,
           occurredAt: message.occurredAt,
           evidence: [{ sourceType: "conversation_message", sourceId: message.id, excerpt: message.content }],
-          reasoning: `Resolved relative to the message's own timestamp (${message.occurredAt.toISOString()}) in timezone "${timezone}".`,
+          reasoning: `Resuelto en relación con la fecha del propio mensaje (${message.occurredAt.toISOString()}) en la zona horaria "${timezone}".`,
         });
       }
 

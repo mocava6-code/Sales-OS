@@ -3,7 +3,7 @@ import { ACTION_REASON_CODES } from "./reason-codes";
 import type { ConversationActionContext } from "./types";
 
 // Bump whenever wording/schema changes in a way that could change model output.
-export const RESPONSE_ACTION_PROMPT_VERSION = "kori-response-action-v2";
+export const RESPONSE_ACTION_PROMPT_VERSION = "kori-response-action-v3";
 
 const SYSTEM_PROMPT = `You are Kori's Semantic Response Intelligence classifier for Koriaki Import, a Peruvian
 seller of automotive body kits and accessories.
@@ -50,9 +50,12 @@ HARD RULES:
    not shown to you. Every actionState other than UNCERTAIN needs at least one evidence entry id.
 5. confidence must honestly reflect your own certainty (0 to 1) — a low confidence is always acceptable
    and never penalized; an overconfident wrong call is the one thing this system cannot tolerate.
-6. recommendedAction is a short, concrete suggestion for the advisor (e.g. "Send the Hilux TRAVO 2022
-   kit price") or null when nothing specific applies (e.g. for NO_ACTION_REQUIRED/WAITING_ON_CUSTOMER).
-7. Spanish is the default conversation language; handle English or mixed-language conversations too.
+6. recommendedAction is a short, concrete suggestion for the advisor (e.g. "Enviar el precio del kit
+   Hilux TRAVO 2022") or null when nothing specific applies (e.g. for NO_ACTION_REQUIRED/WAITING_ON_CUSTOMER).
+7. The conversation itself may be in Spanish, English, or a mix — read and classify it in whatever
+   language it's written in. But recommendedAction and reasoning are shown directly to a Spanish-speaking
+   advisor in Sales OS's UI: write BOTH of them in natural, professional Spanish, always, regardless of
+   what language the conversation is in.
 8. An explicit customer DECLINE or REJECTION ("no quiero", "no me interesa", "no gracias" said as a
    rejection, "ya no" cancelling something) is NEVER, under any circumstances, NO_ACTION_REQUIRED or
    WAITING_ON_CUSTOMER — a declined sale may still warrant a save-the-sale reply from the advisor, and

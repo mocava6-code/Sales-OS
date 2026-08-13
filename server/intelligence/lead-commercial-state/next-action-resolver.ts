@@ -24,7 +24,7 @@ export function resolveNextAction(input: NextActionInput): ResolvedNextAction {
   if (input.paymentStatus.value === "AWAITING_PAYMENT") {
     return {
       value: "CONFIRM_PAYMENT",
-      reasoning: "The advisor requested payment and no confirmation has been observed yet.",
+      reasoning: "El asesor solicitó el pago y todavía no se observó una confirmación.",
       evidence: input.paymentStatus.evidence,
     };
   }
@@ -32,7 +32,7 @@ export function resolveNextAction(input: NextActionInput): ResolvedNextAction {
   if (input.conversationState.value === "NEEDS_REPLY") {
     return {
       value: "ANSWER_QUESTION",
-      reasoning: "The customer's last message has not been answered yet.",
+      reasoning: "El último mensaje del cliente todavía no ha sido respondido.",
       evidence: input.conversationState.evidence,
     };
   }
@@ -40,7 +40,7 @@ export function resolveNextAction(input: NextActionInput): ResolvedNextAction {
   if (input.paymentStatus.value === "PAYMENT_CONFIRMED" && input.deliveryLocation.value && input.requestedDeliveryAt.value) {
     return {
       value: "SCHEDULE_DELIVERY",
-      reasoning: "Payment is confirmed and both a delivery location and date/time are known.",
+      reasoning: "El pago está confirmado y se conocen tanto el lugar como la fecha/hora de entrega.",
       evidence: [...input.deliveryLocation.evidence, ...input.requestedDeliveryAt.evidence],
     };
   }
@@ -51,7 +51,7 @@ export function resolveNextAction(input: NextActionInput): ResolvedNextAction {
   if (input.productInterest.value && input.paymentStatus.value !== "PAYMENT_CONFIRMED") {
     return {
       value: "SEND_QUOTE",
-      reasoning: "A product has been discussed but no payment step has started yet.",
+      reasoning: "Se conversó sobre un producto, pero todavía no se inició el proceso de pago.",
       evidence: input.productInterest.evidence,
     };
   }
@@ -59,10 +59,10 @@ export function resolveNextAction(input: NextActionInput): ResolvedNextAction {
   if (input.conversationState.value === "WAITING_ON_CUSTOMER") {
     return {
       value: "FOLLOW_UP",
-      reasoning: "The advisor is waiting on the customer with no more specific blocking action identified.",
+      reasoning: "El asesor está esperando al cliente y no se identificó una acción bloqueante más específica.",
       evidence: input.conversationState.evidence,
     };
   }
 
-  return { value: "NONE", reasoning: "No commercial action is currently indicated.", evidence: [] };
+  return { value: "NONE", reasoning: "Por ahora no se indica ninguna acción comercial.", evidence: [] };
 }

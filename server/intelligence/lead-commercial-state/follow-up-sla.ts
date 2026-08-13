@@ -30,6 +30,6 @@ export function resolveFollowUpDueAt(
     value: dueAt,
     confidence: 1,
     evidence: [{ sourceType: "conversation_message", sourceId: activeConversationId }],
-    reasoning: `${slaHours}h SLA for ${nextAction}, applied to the last contact at ${lastContactAt.toISOString()}.`,
+    reasoning: `SLA de ${slaHours}h para ${nextAction}, aplicado al último contacto del ${lastContactAt.toISOString()}.`,
   };
 }

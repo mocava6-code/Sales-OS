@@ -134,7 +134,7 @@ describe("freetext product/vehicle extractor — general behavior", () => {
     const [candidate] = vehicleModelExtractor.extract([message({ content: "hilux 2026" })]);
     expect(candidate.confidence).toBeLessThan(0.9);
     expect(candidate.evidence[0].excerpt).toBe("hilux 2026");
-    expect(candidate.reasoning).toMatch(/no product catalog/i);
+    expect(candidate.reasoning).toMatch(/catálogo de productos configurado/i);
   });
 
   it("matches regardless of message direction (advisor confirming the product also counts as evidence)", () => {

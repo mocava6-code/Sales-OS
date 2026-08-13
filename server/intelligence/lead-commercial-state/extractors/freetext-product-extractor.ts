@@ -113,7 +113,7 @@ export const PRODUCT_TYPE_KEYWORDS: Record<string, string> = {
 const YEAR_PATTERN = /^(19|20)\d{2}$/;
 const FREETEXT_EXTRACTOR_VERSION = "2.0.0";
 const FREETEXT_CONFIDENCE = 0.6;
-const FREETEXT_REASONING = "Free-text match against a static vehicle/product vocabulary — no product catalog configured yet.";
+const FREETEXT_REASONING = "Coincidencia de texto libre contra un vocabulario fijo de vehículos/productos — todavía no hay un catálogo de productos configurado.";
 
 function tokenize(content: string): string[] {
   return normalizeContent(content).split(/[^a-z0-9]+/).filter(Boolean);

@@ -18,7 +18,7 @@ describe("deliveryLocationExtractor — worked example", () => {
     const [candidate] = deliveryLocationExtractor.extract([message({ content: "hace envíos a chaclacayo?" })]);
 
     expect(candidate.value).toBe("Chaclacayo");
-    expect(candidate.reasoning).toMatch(/gazetteer/i);
+    expect(candidate.reasoning).toMatch(/distrito\/ciudad conocido/i);
   });
 });
 
@@ -31,7 +31,7 @@ describe("deliveryLocationExtractor — general behavior", () => {
     const [candidate] = deliveryLocationExtractor.extract([message({ content: "hacen envios a pueblo libre?" })]);
 
     expect(candidate.value).toBe("Pueblo Libre");
-    expect(candidate.reasoning).toMatch(/not a recognized place/i);
+    expect(candidate.reasoning).toMatch(/no es un lugar reconocido/i);
   });
 
   it("gazetteer-tier candidates carry higher confidence than pattern-fallback ones", () => {
