@@ -70,3 +70,11 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
   if (days < 7) return `Hace ${days} d`;
   return formatDate(date);
 }
+
+/** "Buenos días" / "Buenas tardes" / "Buenas noches" — by the hour in America/Lima, not the server's own timezone. */
+export function formatGreeting(now: Date = new Date()): string {
+  const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: TIME_ZONE }).format(now));
+  if (hour < 12) return "Buenos días";
+  if (hour < 19) return "Buenas tardes";
+  return "Buenas noches";
+}
