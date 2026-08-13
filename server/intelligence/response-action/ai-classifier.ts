@@ -41,6 +41,32 @@ function isExplicitDecline(context: ConversationActionContext): boolean {
   return DECLINE_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
+// Same defense-in-depth reasoning, a second real finding from the same
+// Phase 5 evaluation: given a bare "[unsupported message type: reaction]"
+// placeholder (server/whatsapp/message-normalizer.ts — the exact string
+// stored when a WhatsApp entry has no real text, e.g. an emoji reaction to
+// an earlier message, with no caption), the model confidently (0.9)
+// resolved NO_ACTION_REQUIRED / CONVERSATION_NOT_COMMERCIAL. There is no
+// actual text there to ground that claim in — a reaction to a real
+// commercial message is not evidence the conversation is closed or
+// off-topic, it's just content this system can't read. These placeholders
+// are exact, fixed strings (only used when message-normalizer.ts had no
+// caption to fall back to), so an exact match is safe — a message that DID
+// have a caption would never produce one of these strings at all.
+const NO_TEXT_CONTENT_PLACEHOLDERS = ["[image]", "[document]", "[audio]", "[video]", "[sticker]"] as const;
+const UNSUPPORTED_MESSAGE_TYPE_PATTERN = /^\[unsupported message type: .+\]$/;
+
+function isNoTextContentPlaceholder(content: string): boolean {
+  const trimmed = content.trim();
+  return (NO_TEXT_CONTENT_PLACEHOLDERS as readonly string[]).includes(trimmed) || UNSUPPORTED_MESSAGE_TYPE_PATTERN.test(trimmed);
+}
+
+function isLastInboundMessageContentless(context: ConversationActionContext): boolean {
+  const content = lastInboundContent(context);
+  if (!content) return false;
+  return isNoTextContentPlaceholder(content);
+}
+
 /**
  * "Use conservative thresholds" — a result below this is never trusted as
  * one of the four actionable states, regardless of what the model
@@ -133,6 +159,18 @@ export async function classifyConversationActionWithAI(context: ConversationActi
       reasonCode: "UNCERTAIN_CONTEXT",
       confidence: output.confidence,
       reasoning: `Safety override: the customer's message contains an explicit decline, which must never resolve to ${output.actionState} — coerced to UNCERTAIN regardless of model confidence. Original AI assessment: ${output.reasoning}`,
+      evidenceEntryIds: output.evidenceEntryIds,
+      recommendedAction: null,
+      source: "AI",
+    };
+  }
+
+  if (output.actionState === "NO_ACTION_REQUIRED" && isLastInboundMessageContentless(context)) {
+    return {
+      actionState: "UNCERTAIN",
+      reasonCode: "UNCERTAIN_CONTEXT",
+      confidence: output.confidence,
+      reasoning: `Safety override: the customer's most recent message has no readable text (media/sticker/reaction placeholder) — there is nothing to ground a confident NO_ACTION_REQUIRED in, coerced to UNCERTAIN. Original AI assessment: ${output.reasoning}`,
       evidenceEntryIds: output.evidenceEntryIds,
       recommendedAction: null,
       source: "AI",

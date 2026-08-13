@@ -167,6 +167,49 @@ describe("classifyConversationActionWithAI — explicit decline safety override 
   });
 });
 
+describe("classifyConversationActionWithAI — no-readable-text safety override (Phase 5 production finding)", () => {
+  // Confirmed against a REAL Groq production call during Phase 5
+  // evaluation: given a bare "[unsupported message type: reaction]"
+  // placeholder (no real text — see message-normalizer.ts), the model
+  // returned NO_ACTION_REQUIRED / CONVERSATION_NOT_COMMERCIAL at 0.9
+  // confidence. There's no actual customer text to ground that claim in.
+  it.each(["[image]", "[document]", "[audio]", "[video]", "[sticker]", "[unsupported message type: reaction]", "[unsupported message type: unsupported]"])(
+    'overrides a confident NO_ACTION_REQUIRED to UNCERTAIN for content-less message "%s"',
+    async (content) => {
+      const mediaContext = context({ recentEntries: [{ id: "entry-1", direction: "INBOUND", content, occurredAt: new Date("2026-08-01T00:00:00Z") }] });
+      const mock = createMockAIProvider({
+        response: jsonResponse({ actionState: "NO_ACTION_REQUIRED", reasonCode: "CONVERSATION_NOT_COMMERCIAL", confidence: 0.9, reasoning: "Not commercial.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+      });
+
+      const result = await classifyConversationActionWithAI(mediaContext, { aiProvider: mock.provider });
+
+      expect(result.actionState).toBe("UNCERTAIN");
+    },
+  );
+
+  it("does NOT override WAITING_ON_CUSTOMER for a content-less message — only the NO_ACTION_REQUIRED claim is unsafe here", async () => {
+    const mediaContext = context({ recentEntries: [{ id: "entry-1", direction: "INBOUND", content: "[sticker]", occurredAt: new Date("2026-08-01T00:00:00Z") }] });
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "WAITING_ON_CUSTOMER", reasonCode: "WAITING_FOR_CUSTOMER_DECISION", confidence: 0.9, reasoning: "Nothing further owed.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+    });
+
+    const result = await classifyConversationActionWithAI(mediaContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("WAITING_ON_CUSTOMER");
+  });
+
+  it("does not trigger for a real caption that happens to be wrapped in brackets", async () => {
+    const captionedContext = context({ recentEntries: [{ id: "entry-1", direction: "INBOUND", content: "[Precio especial hoy]", occurredAt: new Date("2026-08-01T00:00:00Z") }] });
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "NO_ACTION_REQUIRED", reasonCode: "CUSTOMER_CLOSING_ACKNOWLEDGEMENT", confidence: 0.9, reasoning: "Closing.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+    });
+
+    const result = await classifyConversationActionWithAI(captionedContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("NO_ACTION_REQUIRED"); // not an exact match against the known placeholder set — left untouched
+  });
+});
+
 describe("classifyConversationActionWithAI — failure modes throw typed errors", () => {
   it("throws AICapabilityNotSupportedError when the provider has no conversationAnalysis capability", async () => {
     const provider = { name: "no-analysis", modelName: "x", capabilities: {} };
