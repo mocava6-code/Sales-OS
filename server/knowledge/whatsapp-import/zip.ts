@@ -29,7 +29,14 @@ export class ZipTooLargeError extends Error {
   }
 }
 
-const MAX_MEMBER_COUNT = 20;
+// A real months-long sales conversation with photos/voice notes easily
+// exceeds a couple dozen attachments — confirmed a real production export
+// hit this cap and failed to import. The genuine memory guard is
+// MAX_CHAT_TEXT_BYTES below (only the chat transcript itself is ever
+// decompressed, never the media members) — this count is a much cheaper,
+// coarser backstop against a truly pathological archive, not the primary
+// defense, so it can afford to be generous.
+const MAX_MEMBER_COUNT = 500;
 const MAX_CHAT_TEXT_BYTES = 50 * 1024 * 1024; // 50MB, decompressed
 
 /**

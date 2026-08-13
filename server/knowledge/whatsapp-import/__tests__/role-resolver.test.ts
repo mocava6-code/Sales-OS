@@ -30,6 +30,26 @@ describe("resolveParticipantRoles — deterministic identity match", () => {
   });
 });
 
+describe("resolveParticipantRoles — production regression: business account name, not an individual advisor", () => {
+  it("resolves 'Koriaki Import' (the WhatsApp Business account name) when the registered Business.name is included as a known identifier", () => {
+    // A WhatsApp Business export's sender label for outbound messages is
+    // always the account's own display name, never an individual advisor's
+    // — confirmed against a real production export. The caller
+    // (server/application/whatsapp-actions.ts's fetchKnownBusinessNames) is
+    // responsible for including Business.name alongside every User.name;
+    // this test proves the existing word-overlap rule correctly resolves
+    // it once that identifier is present, with zero change to this function.
+    const result = resolveParticipantRoles(["Koriaki Import", "+51 933 888 197"], ["Mosiah Carrasco", "Koriaki"]);
+
+    expect(result).toEqual({ needsInput: false, method: "DETERMINISTIC_USER_MATCH", businessSenderLabel: "Koriaki Import" });
+  });
+
+  it("still requires manual resolution when only individual advisor names are known (the pre-fix behavior, for contrast)", () => {
+    const result = resolveParticipantRoles(["Koriaki Import", "+51 933 888 197"], ["Mosiah Carrasco"]);
+    expect(result.needsInput).toBe(true);
+  });
+});
+
 describe("resolveParticipantRoles — manual prompt", () => {
   it("requires input for an unmatched 1:1 chat", () => {
     const result = resolveParticipantRoles(["María López", "Juan Pérez"], []);

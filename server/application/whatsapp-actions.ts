@@ -265,6 +265,30 @@ export interface HistoricalImportActionDependencies extends ActionDependencies {
   db?: PrismaClient;
 }
 
+/**
+ * Every identity the deterministic participant matcher is allowed to
+ * recognize as "this is the business" — individual advisor names (User.name)
+ * PLUS the business's own registered account name (Business.name).
+ * Confirmed against a real production export: a WhatsApp Business export's
+ * sender label for outbound messages is ALWAYS the business's own account
+ * display name ("Koriaki Import"), never an individual advisor's name — so
+ * matching against User.name alone never resolves deterministically for any
+ * real Koriaki export, forcing every single import into manual resolution.
+ * Business.name ("Koriaki") shares a whole word with "Koriaki Import", so
+ * the EXISTING word-overlap rule in resolveParticipantRoles already matches
+ * it correctly once it's included here — no change to that matching logic
+ * itself, only to what identity data it's given.
+ */
+async function fetchKnownBusinessNames(businessId: string, db: PrismaClient): Promise<string[]> {
+  const [businessUsers, business] = await Promise.all([
+    db.user.findMany({ where: { businessId }, select: { name: true } }),
+    db.business.findUnique({ where: { id: businessId }, select: { name: true } }),
+  ]);
+  const names = businessUsers.map((u) => u.name);
+  if (business?.name) names.push(business.name);
+  return names;
+}
+
 export function previewHistoricalImportHandler(
   rawInput: unknown,
   dependencies: HistoricalImportActionDependencies = {},
@@ -275,12 +299,12 @@ export function previewHistoricalImportHandler(
     assertHistoricalImportAccess(user);
     const input = parseOrThrow(previewHistoricalImportSchema, rawInput);
 
-    const businessUsers = await db.user.findMany({ where: { businessId: user.businessId }, select: { name: true } });
+    const knownBusinessNames = await fetchKnownBusinessNames(user.businessId, db);
     const parsed = parseWhatsAppExport({
       rawText: input.rawText,
       dateOrder: input.dateOrder,
       timezone: input.timezone,
-      knownBusinessNames: businessUsers.map((u) => u.name),
+      knownBusinessNames,
       manualBusinessSenderLabel: input.manualBusinessSenderLabel,
     });
 
@@ -368,12 +392,12 @@ export function importHistoricalWhatsAppChatHandler(
     assertHistoricalImportAccess(user);
     const input = parseOrThrow(importHistoricalWhatsAppChatSchema, rawInput);
 
-    const businessUsers = await db.user.findMany({ where: { businessId: user.businessId }, select: { name: true } });
+    const knownBusinessNames = await fetchKnownBusinessNames(user.businessId, db);
     const parsed = parseWhatsAppExport({
       rawText: input.rawText,
       dateOrder: input.dateOrder,
       timezone: input.timezone,
-      knownBusinessNames: businessUsers.map((u) => u.name),
+      knownBusinessNames,
       manualBusinessSenderLabel: input.manualBusinessSenderLabel,
     });
 

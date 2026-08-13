@@ -15,8 +15,19 @@ import { createFakeAuthContextResolver } from "../testing/fake-auth";
 const advisor = { id: "user-1", businessId: "biz-1", role: "SALESPERSON" as const };
 const owner = { id: "user-2", businessId: "biz-1", role: "OWNER" as const };
 
-function fakeDb(businessNames: string[] = ["Koriaki"]) {
-  return { user: { findMany: async () => businessNames.map((name) => ({ name })) } } as never;
+// `businessUserNames` simulates User.name rows; `businessName` simulates
+// Business.name — fetchKnownBusinessNames (whatsapp-actions.ts) merges
+// both into the identifier list passed to the parser. Defaults preserve
+// every existing call site's behavior (a single "Koriaki" identifier),
+// sourced from Business.name now instead of User.name — the real-world
+// shape (see fetchKnownBusinessNames's own doc comment: a WhatsApp
+// Business export's sender label is always the account name, never an
+// individual advisor's).
+function fakeDb(businessUserNames: string[] = [], businessName: string | null = "Koriaki") {
+  return {
+    user: { findMany: async () => businessUserNames.map((name) => ({ name })) },
+    business: { findUnique: async () => (businessName ? { name: businessName } : null) },
+  } as never;
 }
 
 const TWO_PARTICIPANT_CHAT = [
@@ -412,7 +423,7 @@ describe("previewHistoricalImportHandler", () => {
   it("resolves a 2-participant chat against a known business name and suggests a phone only when the customer label looks like one", async () => {
     const result = await previewHistoricalImportHandler(
       { rawText: TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb() },
     );
     expect(result.ok).toBe(true);
     if (result.ok && result.data.status === "READY_TO_IMPORT") {
@@ -424,11 +435,58 @@ describe("previewHistoricalImportHandler", () => {
     }
   });
 
+  it("production regression: resolves a real WhatsApp Business export against Business.name, with no advisor-name match needed", async () => {
+    // Verbatim from a real production export that previously got stuck at
+    // NEEDS_PARTICIPANT_RESOLUTION on every attempt, because "Koriaki
+    // Import" (the WhatsApp Business account's own display name) never
+    // matched any individual User.name. fakeDb's default businessName
+    // ("Koriaki") simulates the real registered Business.name — no
+    // businessUserNames are supplied, proving the match comes from the
+    // business identifier specifically, not coincidentally from a user.
+    const productionSample = [
+      "11/8/2026, 6:11 p. m. - Tu empresa usa un servicio seguro de Meta para administrar este chat. Toca para obtener más información.",
+      "11/8/2026, 6:11 p. m. -",
+      "11/8/2026, 6:11 p. m. - Koriaki Import: Anuncio de Facebook Ver detalles Hi ! Please let us know how we can help you.",
+      "11/8/2026, 6:11 p. m. - +51 933 888 197: Hola",
+      "11/8/2026, 6:12 p. m. - +51 933 888 197: Estoy interesado en el Kit de Conversión para una Ford Ranger XLT 2019 a la versión Raptor",
+      "11/8/2026, 9:16 p. m. - Este chat se inició a partir de un anuncio de Facebook o Instagram...",
+      "11/8/2026, 9:16 p. m. - Koriaki Import: ¡Hola! ¿Que tal?",
+      "Le saluda Maria Chaca asesora de Koriaki Import 😊",
+    ].join("\n");
+
+    const result = await previewHistoricalImportHandler(
+      { rawText: productionSample, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok && result.data.status === "READY_TO_IMPORT") {
+      // 3, not 4 — the Meta ad-context auto-message is excluded as a
+      // system event, never counted as something the business typed.
+      expect(result.data.messageCount).toBe(3);
+      expect(result.data.suggestedCustomerPhone).toBe("+51 933 888 197");
+    } else {
+      throw new Error(`expected READY_TO_IMPORT, got ${JSON.stringify(result)}`);
+    }
+  });
+
+  it("without Business.name registered, the same real export still needs manual resolution (documents the pre-fix failure mode)", async () => {
+    const productionSample = "11/8/2026, 6:11 p. m. - Koriaki Import: Hola\n11/8/2026, 6:12 p. m. - +51 933 888 197: Hola";
+
+    const result = await previewHistoricalImportHandler(
+      { rawText: productionSample, timezone: "America/Lima" },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Mosiah Carrasco"], null) },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.status).toBe("NEEDS_PARTICIPANT_RESOLUTION");
+  });
+
   it("suggests the customer phone when the unsaved-contact label is phone-shaped", async () => {
     const chat = TWO_PARTICIPANT_CHAT.replace(/Juan Pérez/g, "+51 999 999 999");
     const result = await previewHistoricalImportHandler(
       { rawText: chat, timezone: "America/Lima" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb() },
     );
     expect(result.ok).toBe(true);
     if (result.ok && result.data.status === "READY_TO_IMPORT") {
@@ -441,7 +499,7 @@ describe("previewHistoricalImportHandler", () => {
   it("returns NEEDS_PARTICIPANT_RESOLUTION for an ambiguous 2-participant chat with no known-business match", async () => {
     const result = await previewHistoricalImportHandler(
       { rawText: AMBIGUOUS_TWO_PARTICIPANT_CHAT, timezone: "America/Lima" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Someone Else"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb([], "Someone Else") },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -455,7 +513,7 @@ describe("previewHistoricalImportHandler", () => {
   it("resolves an ambiguous chat once manualBusinessSenderLabel is supplied", async () => {
     const result = await previewHistoricalImportHandler(
       { rawText: AMBIGUOUS_TWO_PARTICIPANT_CHAT, timezone: "America/Lima", manualBusinessSenderLabel: "María López" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Someone Else"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb([], "Someone Else") },
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.status).toBe("READY_TO_IMPORT");
@@ -464,7 +522,7 @@ describe("previewHistoricalImportHandler", () => {
   it("rejects a 3+ participant (group) chat as INVALID_INPUT", async () => {
     const result = await previewHistoricalImportHandler(
       { rawText: GROUP_CHAT, timezone: "America/Lima" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb() },
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
@@ -473,7 +531,7 @@ describe("previewHistoricalImportHandler", () => {
   it("counts unparseable timestamps without dropping the chat", async () => {
     const result = await previewHistoricalImportHandler(
       { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima" },
-      { resolver: createFakeAuthContextResolver(owner), db: fakeDb(["Koriaki"]) },
+      { resolver: createFakeAuthContextResolver(owner), db: fakeDb() },
     );
     expect(result.ok).toBe(true);
     if (result.ok && result.data.status === "READY_TO_IMPORT") {
@@ -524,7 +582,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { rawText: GROUP_CHAT, timezone: "America/Lima", phone: "+51900000005" },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => {
           leadCalled = true;
           return { id: "lead-1" };
@@ -547,7 +605,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { rawText: CHAT_WITH_BAD_TIMESTAMP, timezone: "America/Lima", phone: "+51900000005" },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => ({ id: "lead-1" }),
         importEntries: async (_businessId, _leadId, entries) => {
           capturedEntries = entries;
@@ -571,7 +629,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { ...baseInput, runAnalysis: false },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => ({ id: "lead-1" }),
         importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
         runAnalysis: async () => {
@@ -590,7 +648,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { ...baseInput, runAnalysis: true },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => ({ id: "lead-1" }),
         importEntries: async () => ({ conversationId: "conv-1", conversationCreated: false, createdCount: 0, duplicateCount: 3 }),
         runAnalysis: async () => {
@@ -609,7 +667,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { ...baseInput, runAnalysis: true },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => ({ id: "lead-1" }),
         importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
         runAnalysis: async () => {
@@ -627,7 +685,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
       { ...baseInput, runAnalysis: true },
       {
         resolver: createFakeAuthContextResolver(owner),
-        db: fakeDb(["Koriaki"]),
+        db: fakeDb(),
         findOrCreateLead: async () => ({ id: "lead-1" }),
         importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
         runAnalysis: async () => {
