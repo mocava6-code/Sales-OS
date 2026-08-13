@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TextField, TextAreaField } from "@/components/ui/Field";
 import { LOST_REASONS, LOST_REASON_LABELS, type ConversationOutcomeType, type LostReason } from "@/lib/validations/outcome";
-import { recordConversationOutcomeAction } from "@/server/actions/outcomes";
+import { recordConversationOutcomeAction, suggestConversationOutcomeAction } from "@/server/actions/outcomes";
+import type { OutcomeSuggestion } from "@/server/kori/outcome-suggestion-types";
 
 const OUTCOME_CHOICES: { value: ConversationOutcomeType | "PENDING"; icon: string; label: string; tone: string }[] = [
   { value: "SALE_CLOSED", icon: "✅", label: "Venta realizada", tone: "bg-emerald-50 text-emerald-800 border-emerald-200" },
@@ -14,6 +15,12 @@ const OUTCOME_CHOICES: { value: ConversationOutcomeType | "PENDING"; icon: strin
   { value: "PENDING", icon: "⏳", label: "Seguimiento pendiente", tone: "bg-neutral-50 text-neutral-700 border-neutral-200" },
   { value: "NOT_AN_OPPORTUNITY", icon: "🚫", label: "No era oportunidad", tone: "bg-neutral-50 text-neutral-500 border-neutral-200" },
 ];
+
+const SUGGESTION_LABEL: Record<OutcomeSuggestion["suggestedOutcomeType"], string> = {
+  SALE_CLOSED: "Venta realizada",
+  SALE_LOST: "Venta perdida",
+  NOT_AN_OPPORTUNITY: "No era oportunidad",
+};
 
 type ViewState = { kind: "CLOSED" } | { kind: "CHOOSING" } | { kind: "DETAILS"; outcomeType: ConversationOutcomeType } | { kind: "DONE" };
 
@@ -24,6 +31,11 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // Fase C: a best-effort "Kori sugiere" hint, fetched independently of
+  // isPending/startTransition above on purpose — the manual four-button
+  // flow must stay fully interactive immediately, whether or not (or how
+  // long) this ever resolves. Never written anywhere; a pure UI hint.
+  const [suggestion, setSuggestion] = useState<OutcomeSuggestion | null>(null);
   const router = useRouter();
 
   function reset() {
@@ -32,6 +44,14 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
     setProductSold(suggestedProduct ?? "");
     setNotes("");
     setError(null);
+    setSuggestion(null);
+  }
+
+  function openSheet() {
+    setView({ kind: "CHOOSING" });
+    void suggestConversationOutcomeAction({ conversationId }).then((result) => {
+      if (result.ok) setSuggestion(result.data);
+    });
   }
 
   function choose(value: (typeof OUTCOME_CHOICES)[number]["value"]) {
@@ -41,6 +61,12 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
     }
     setError(null);
     setView({ kind: "DETAILS", outcomeType: value });
+    // A suggested lostReason is a pre-selected default, never a silent
+    // write — the advisor still sees it as a normal chip selection and can
+    // change it before Guardar does anything.
+    if (value === "SALE_LOST" && suggestion?.suggestedOutcomeType === "SALE_LOST" && suggestion.suggestedLostReason) {
+      setLostReason(suggestion.suggestedLostReason);
+    }
   }
 
   function submit(outcomeType: ConversationOutcomeType) {
@@ -73,7 +99,7 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
     return (
       <button
         type="button"
-        onClick={() => setView({ kind: "CHOOSING" })}
+        onClick={openSheet}
         className="w-full rounded-xl border border-neutral-300 px-4 py-2.5 text-center text-sm font-medium text-neutral-700"
       >
         Marcar resultado
@@ -101,6 +127,15 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
         </button>
       </div>
 
+      {view.kind === "CHOOSING" && suggestion && (
+        <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-relaxed text-indigo-900">
+          <span className="font-semibold">✨ Kori sugiere: {SUGGESTION_LABEL[suggestion.suggestedOutcomeType]}</span>
+          {suggestion.suggestedLostReason ? ` (${LOST_REASON_LABELS[suggestion.suggestedLostReason]})` : ""}
+          {" — "}
+          {suggestion.reasoning}
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-2">
         {OUTCOME_CHOICES.map((choice) => (
           <button
@@ -110,7 +145,7 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
             onClick={() => choose(choice.value)}
             className={`rounded-xl border px-3 py-2.5 text-left text-sm font-medium disabled:opacity-50 ${choice.tone} ${
               view.kind === "DETAILS" && view.outcomeType === choice.value ? "ring-2 ring-neutral-900" : ""
-            }`}
+            } ${view.kind === "CHOOSING" && suggestion?.suggestedOutcomeType === choice.value ? "ring-2 ring-indigo-400" : ""}`}
           >
             {choice.icon} {choice.label}
           </button>
@@ -120,6 +155,9 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
       {view.kind === "DETAILS" && view.outcomeType === "SALE_LOST" && (
         <div className="space-y-2">
           <p className="text-sm font-medium text-neutral-700">¿Por qué se perdió?</p>
+          {suggestion?.suggestedOutcomeType === "SALE_LOST" && suggestion.suggestedLostReason && (
+            <p className="text-xs text-indigo-600">Kori sugirió este motivo — puedes cambiarlo.</p>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {LOST_REASONS.map((reason) => (
               <button

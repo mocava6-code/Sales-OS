@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordOutcomeSheet } from "../RecordOutcomeSheet";
 
 vi.mock("@/server/actions/outcomes", () => ({
   recordConversationOutcomeAction: vi.fn(),
+  suggestConversationOutcomeAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-import { recordConversationOutcomeAction } from "@/server/actions/outcomes";
+import { recordConversationOutcomeAction, suggestConversationOutcomeAction } from "@/server/actions/outcomes";
+
+beforeEach(() => {
+  vi.mocked(suggestConversationOutcomeAction).mockReset();
+  // Default: no suggestion — most tests don't care about Fase C at all, and
+  // this keeps the existing manual-flow assertions unaffected by it.
+  vi.mocked(suggestConversationOutcomeAction).mockResolvedValue({ ok: true, data: null });
+});
 
 function fakeSuccess(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -133,5 +141,79 @@ describe("RecordOutcomeSheet", () => {
     fireEvent.click(screen.getByText("Cancelar"));
 
     expect(screen.getByRole("button", { name: "Marcar resultado" })).toBeInTheDocument();
+  });
+
+  it("does not fetch a suggestion until the sheet is opened", () => {
+    render(<RecordOutcomeSheet conversationId="conv-1" suggestedProduct={null} />);
+    expect(suggestConversationOutcomeAction).not.toHaveBeenCalled();
+  });
+
+  it("fetches a suggestion for this conversation when the sheet opens, and shows it once resolved", async () => {
+    vi.mocked(suggestConversationOutcomeAction).mockResolvedValue({
+      ok: true,
+      data: { suggestedOutcomeType: "SALE_LOST", suggestedLostReason: "PRECIO", reasoning: "El cliente preguntó el precio y no volvió a responder." },
+    });
+
+    render(<RecordOutcomeSheet conversationId="conv-1" suggestedProduct={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Marcar resultado" }));
+
+    expect(suggestConversationOutcomeAction).toHaveBeenCalledWith({ conversationId: "conv-1" });
+    await waitFor(() => expect(screen.getByText(/Kori sugiere: Venta perdida/)).toBeInTheDocument());
+    expect(screen.getByText(/El cliente preguntó el precio y no volvió a responder\./)).toBeInTheDocument();
+  });
+
+  it("shows nothing extra when the suggestion is null (AI unavailable or no opinion) — identical to the baseline flow", async () => {
+    render(<RecordOutcomeSheet conversationId="conv-1" suggestedProduct={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Marcar resultado" }));
+
+    await waitFor(() => expect(suggestConversationOutcomeAction).toHaveBeenCalled());
+    expect(screen.queryByText(/Kori sugiere/)).not.toBeInTheDocument();
+  });
+
+  it("pre-selects the suggested lost reason chip, but still requires the advisor to confirm by tapping Guardar", async () => {
+    vi.mocked(suggestConversationOutcomeAction).mockResolvedValue({
+      ok: true,
+      data: { suggestedOutcomeType: "SALE_LOST", suggestedLostReason: "TIEMPO_DE_ESPERA", reasoning: "Se cansó de esperar la cotización." },
+    });
+    vi.mocked(recordConversationOutcomeAction).mockReset();
+    vi.mocked(recordConversationOutcomeAction).mockResolvedValue(fakeSuccess({ outcomeType: "SALE_LOST", lostReason: "TIEMPO_DE_ESPERA" }));
+
+    render(<RecordOutcomeSheet conversationId="conv-1" suggestedProduct={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Marcar resultado" }));
+    await waitFor(() => expect(screen.getByText(/Kori sugiere: Venta perdida/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("❌ Venta perdida"));
+
+    expect(screen.getByText("Tiempo de espera")).toHaveClass("bg-neutral-900");
+    expect(screen.getByText("Kori sugirió este motivo — puedes cambiarlo.")).toBeInTheDocument();
+    expect(recordConversationOutcomeAction).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(screen.getByText("Resultado guardado.")).toBeInTheDocument());
+    expect(recordConversationOutcomeAction).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      outcomeType: "SALE_LOST",
+      lostReason: "TIEMPO_DE_ESPERA",
+      productSold: undefined,
+      notes: undefined,
+    });
+  });
+
+  it("lets the advisor pick a different lost reason than the one Kori suggested", async () => {
+    vi.mocked(suggestConversationOutcomeAction).mockResolvedValue({
+      ok: true,
+      data: { suggestedOutcomeType: "SALE_LOST", suggestedLostReason: "PRECIO", reasoning: "Objetó el precio." },
+    });
+
+    render(<RecordOutcomeSheet conversationId="conv-1" suggestedProduct={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Marcar resultado" }));
+    await waitFor(() => expect(screen.getByText(/Kori sugiere: Venta perdida/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("❌ Venta perdida"));
+    fireEvent.click(screen.getByText("Dejó de responder"));
+
+    expect(screen.getByText("Dejó de responder")).toHaveClass("bg-neutral-900");
+    expect(screen.getByText("Precio")).not.toHaveClass("bg-neutral-900");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recordConversationOutcomeSchema } from "../outcome";
+import { recordConversationOutcomeSchema, suggestConversationOutcomeSchema } from "../outcome";
 
 describe("recordConversationOutcomeSchema", () => {
   it("accepts SALE_CLOSED with no lostReason", () => {
@@ -48,5 +48,19 @@ describe("recordConversationOutcomeSchema", () => {
       notes: "Pagó al contado.",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("suggestConversationOutcomeSchema", () => {
+  it("accepts a bare conversationId", () => {
+    expect(suggestConversationOutcomeSchema.safeParse({ conversationId: "conv-1" }).success).toBe(true);
+  });
+
+  it("rejects a missing conversationId", () => {
+    expect(suggestConversationOutcomeSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects an empty conversationId", () => {
+    expect(suggestConversationOutcomeSchema.safeParse({ conversationId: "" }).success).toBe(false);
   });
 });

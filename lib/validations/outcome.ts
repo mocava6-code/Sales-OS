@@ -40,3 +40,11 @@ export const recordConversationOutcomeSchema = z
   });
 
 export type RecordConversationOutcomeInput = z.infer<typeof recordConversationOutcomeSchema>;
+
+// Kori Sales Memory v1's Fase C — the "Kori sugiere" hint request. Only a
+// conversationId: same tenant-authorized-conversation boundary as recording
+// an outcome, never a second way to scope this.
+export const suggestConversationOutcomeSchema = z.object({
+  conversationId: z.string().min(1, { error: "Se requiere un id de conversación." }),
+});
+export type SuggestConversationOutcomeInput = z.infer<typeof suggestConversationOutcomeSchema>;
