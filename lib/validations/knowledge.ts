@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const analyzeConversationImportSchema = z.object({
-  rawText: z.string().trim().min(1, { error: "The conversation text can't be empty." }),
+  rawText: z.string().trim().min(1, { error: "El texto de la conversación no puede estar vacío." }),
   externalSource: z.enum(["WHATSAPP_TXT_EXPORT", "WHATSAPP_ZIP_EXPORT", "PASTED_TEXT"]),
   sourceConversationId: z.string().min(1),
   rawFileHash: z.string().min(1).optional(),
@@ -12,7 +12,7 @@ export const analyzeConversationImportSchema = z.object({
 export type AnalyzeConversationImportActionInput = z.infer<typeof analyzeConversationImportSchema>;
 
 export const startWebsiteSyncSchema = z.object({
-  rootUrl: z.url({ error: "Enter a valid URL." }),
+  rootUrl: z.url({ error: "Ingresa una URL válida." }),
 });
 
 export type StartWebsiteSyncActionInput = z.infer<typeof startWebsiteSyncSchema>;

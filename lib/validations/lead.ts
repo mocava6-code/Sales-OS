@@ -2,7 +2,7 @@ import { z } from "zod";
 import { InvalidPhoneNumberError, normalizePhoneToE164 } from "@/lib/phone";
 
 export const leadSchema = z.object({
-  name: z.string().trim().min(1, { error: "Name is required." }),
+  name: z.string().trim().min(1, { error: "El nombre es obligatorio." }),
   // Kori Data Correctness Phase 1D — normalized to canonical E.164 here
   // (lib/phone.ts), the write boundary for manual lead creation. Accepts
   // Peru national format ("933517901") or full international format
@@ -16,7 +16,7 @@ export const leadSchema = z.object({
         return normalizePhoneToE164(value);
       } catch (error) {
         if (error instanceof InvalidPhoneNumberError) {
-          ctx.addIssue("Enter a valid phone number.");
+          ctx.addIssue("Ingresa un número de teléfono válido.");
           return z.NEVER;
         }
         throw error;

@@ -41,7 +41,7 @@ export async function rejectCandidateAction(rawInput: unknown) {
 export async function analyzeUploadedConversationAction(formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File)) {
-    return { ok: false as const, error: { code: "INVALID_INPUT" as const, message: "No file was uploaded." } };
+    return { ok: false as const, error: { code: "INVALID_INPUT" as const, message: "No se subió ningún archivo." } };
   }
 
   try {
@@ -50,7 +50,7 @@ export async function analyzeUploadedConversationAction(formData: FormData) {
   } catch (error) {
     return {
       ok: false as const,
-      error: { code: "INVALID_INPUT" as const, message: error instanceof Error ? error.message : "Could not read the uploaded file." },
+      error: { code: "INVALID_INPUT" as const, message: error instanceof Error ? error.message : "No se pudo leer el archivo subido." },
     };
   }
 }

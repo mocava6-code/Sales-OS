@@ -11,14 +11,14 @@ export function LoginForm() {
   return (
     <form action={action} className="space-y-4">
       <TextField
-        label="Email"
+        label="Correo electrónico"
         id="email"
         type="email"
         autoComplete="email"
         required
-        placeholder="you@business.com"
+        placeholder="tu@negocio.com"
       />
-      <SubmitButton pendingText="Sending…">Send magic link</SubmitButton>
+      <SubmitButton pendingText="Enviando…">Enviar enlace de acceso</SubmitButton>
       {state?.message && <p className="text-sm text-neutral-600">{state.message}</p>}
     </form>
   );

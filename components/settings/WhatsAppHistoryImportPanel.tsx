@@ -137,15 +137,15 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
   if (view.kind === "NEEDS_RESOLUTION" || view.kind === "NEEDS_RESOLUTION_FROM_UPLOAD") {
     return (
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Which participant is the business?</p>
+        <p className="font-medium text-neutral-900">¿Cuál participante es el negocio?</p>
         {view.kind === "NEEDS_RESOLUTION_FROM_UPLOAD" ? (
           <p className="text-sm text-neutral-500">
-            This export has an ambiguous sender. Re-upload as a paste (copy the chat text into the box below) so we can ask
-            which participant is the business.
+            Esta exportación tiene un remitente ambiguo. Vuelve a subirla como texto pegado (copia el texto del chat en el
+            cuadro de abajo) para poder preguntar cuál participante es el negocio.
           </p>
         ) : (
           <>
-            <p className="text-sm text-neutral-500">This is metadata resolution, not manual data entry — it just tells us who&apos;s who.</p>
+            <p className="text-sm text-neutral-500">Esto es solo para identificar quién es quién — no es una carga manual de datos.</p>
             <div className="flex gap-2">
               {view.candidateLabels.map((label) => (
                 <Button key={label} type="button" variant="secondary" disabled={isPending} onClick={() => handleResolve(label)}>
@@ -156,7 +156,7 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
           </>
         )}
         <Button type="button" variant="secondary" onClick={reset}>
-          Cancel
+          Cancelar
         </Button>
       </Card>
     );
@@ -166,15 +166,15 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
     const { preview } = view;
     return (
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Ready to import</p>
+        <p className="font-medium text-neutral-900">Listo para importar</p>
         <p className="text-sm text-neutral-500">
-          {preview.messageCount} message{preview.messageCount === 1 ? "" : "s"} found
+          Se encontraron {preview.messageCount} mensaje{preview.messageCount === 1 ? "" : "s"}
           {preview.unparseableTimestampCount > 0 && (
-            <span className="text-red-600"> · {preview.unparseableTimestampCount} will be skipped (unreadable timestamp)</span>
+            <span className="text-red-600"> · se omitirán {preview.unparseableTimestampCount} (fecha/hora ilegible)</span>
           )}
         </p>
         <TextField
-          label="Customer's phone number"
+          label="Número de teléfono del cliente"
           id="historical-import-phone"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
@@ -187,14 +187,14 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
             checked={runAnalysis}
             onChange={(e) => setRunAnalysis(e.target.checked)}
           />
-          Run Kori&apos;s analysis after import
+          Ejecutar el análisis de Kori después de importar
         </label>
         <div className="flex gap-2">
           <Button type="button" disabled={isPending || phone.trim().length === 0} onClick={handleImport}>
-            {isPending ? "Importing…" : "Import"}
+            {isPending ? "Importando…" : "Importar"}
           </Button>
           <Button type="button" variant="secondary" disabled={isPending} onClick={reset}>
-            Cancel
+            Cancelar
           </Button>
         </div>
       </Card>
@@ -205,17 +205,17 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
     const { summary } = view;
     return (
       <Card className="space-y-1">
-        <p className="text-sm text-neutral-900">{summary.createdCount} message{summary.createdCount === 1 ? "" : "s"} imported</p>
+        <p className="text-sm text-neutral-900">Se importaron {summary.createdCount} mensaje{summary.createdCount === 1 ? "" : "s"}</p>
         {summary.duplicateCount > 0 && (
-          <p className="text-sm text-neutral-500">{summary.duplicateCount} already imported — skipped</p>
+          <p className="text-sm text-neutral-500">{summary.duplicateCount} ya estaban importados — se omitieron</p>
         )}
         {summary.skippedUnparseableTimestampCount > 0 && (
-          <p className="text-sm text-neutral-500">{summary.skippedUnparseableTimestampCount} skipped — unreadable timestamp</p>
+          <p className="text-sm text-neutral-500">Se omitieron {summary.skippedUnparseableTimestampCount} — fecha/hora ilegible</p>
         )}
-        <p className="text-sm text-neutral-500">{summary.conversationCreated ? "New conversation created" : "Merged into existing conversation"}</p>
-        {summary.analysisTriggered && <p className="text-sm text-neutral-500">Kori&apos;s analysis ran on the reconstructed conversation</p>}
+        <p className="text-sm text-neutral-500">{summary.conversationCreated ? "Se creó una conversación nueva" : "Se combinó con una conversación existente"}</p>
+        {summary.analysisTriggered && <p className="text-sm text-neutral-500">El análisis de Kori se ejecutó sobre la conversación reconstruida</p>}
         <Button type="button" variant="secondary" className="mt-2" onClick={reset}>
-          Import another
+          Importar otra
         </Button>
       </Card>
     );
@@ -224,28 +224,28 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
   return (
     <div className="space-y-4">
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Chat export</p>
+        <p className="font-medium text-neutral-900">Exportación del chat</p>
         <div className="grid grid-cols-2 gap-3">
-          <SelectField label="Date order" id="historical-import-date-order" value={dateOrder} onChange={(e) => setDateOrder(e.target.value as DateOrder)}>
-            <option value="DMY">Day/Month/Year</option>
-            <option value="MDY">Month/Day/Year</option>
+          <SelectField label="Orden de la fecha" id="historical-import-date-order" value={dateOrder} onChange={(e) => setDateOrder(e.target.value as DateOrder)}>
+            <option value="DMY">Día/Mes/Año</option>
+            <option value="MDY">Mes/Día/Año</option>
           </SelectField>
-          <TextField label="Timezone" id="historical-import-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+          <TextField label="Zona horaria" id="historical-import-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
         </div>
       </Card>
 
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Upload WhatsApp export</p>
+        <p className="font-medium text-neutral-900">Subir exportación de WhatsApp</p>
         <input ref={fileInputRef} type="file" accept=".txt,.zip" className="block w-full text-sm" />
         <Button type="button" disabled={isPending} onClick={handleUploadPreview}>
-          {isPending ? "Reading…" : "Preview"}
+          {isPending ? "Leyendo…" : "Vista previa"}
         </Button>
       </Card>
 
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Paste conversation</p>
+        <p className="font-medium text-neutral-900">Pegar conversación</p>
         <TextAreaField
-          label="Conversation text"
+          label="Texto de la conversación"
           id="historical-import-pasted-text"
           rows={8}
           value={pastedText}
@@ -253,7 +253,7 @@ export function WhatsAppHistoryImportPanel({ defaultTimezone }: { defaultTimezon
           placeholder="27/07/26, 14:05 - Juan Pérez: Hola…"
         />
         <Button type="button" disabled={isPending || pastedText.trim().length === 0} onClick={handlePastePreview}>
-          {isPending ? "Reading…" : "Preview"}
+          {isPending ? "Leyendo…" : "Vista previa"}
         </Button>
       </Card>
 

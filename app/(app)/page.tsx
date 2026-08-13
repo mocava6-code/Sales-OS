@@ -20,8 +20,8 @@ export default async function TodayPage() {
   return (
     <div className="space-y-8">
       <header>
-        <h1 className="text-2xl font-semibold text-neutral-900">Today</h1>
-        <p className="text-sm text-neutral-500">Welcome back, {user.name.split(" ")[0]}</p>
+        <h1 className="text-2xl font-semibold text-neutral-900">Hoy</h1>
+        <p className="text-sm text-neutral-500">Bienvenido de nuevo, {user.name.split(" ")[0]}</p>
       </header>
 
       <OperationalActionsList groups={operationalGroups} now={now} />

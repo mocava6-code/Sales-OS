@@ -15,12 +15,13 @@ import {
   recordAdvisorOverrideAction,
   rejectDecisionAction,
 } from "@/server/actions/decisions";
+import { DECISION_ACTION_LABELS, DECISION_STATUS_LABELS, OVERRIDE_ACTION_TYPE_LABELS } from "@/lib/copy/labels";
 
-const ACTION_LABELS: Record<DecisionActionKind, string> = {
-  APPROVE: "Approve",
-  REJECT: "Reject",
-  OVERRIDE: "Record override",
-  EXECUTE: "Mark executed",
+const ACTION_KEY_BY_KIND: Record<DecisionActionKind, keyof typeof DECISION_ACTION_LABELS> = {
+  APPROVE: "approve",
+  REJECT: "reject",
+  OVERRIDE: "override",
+  EXECUTE: "execute",
 };
 
 const ACTION_VARIANTS: Record<DecisionActionKind, "primary" | "secondary" | "danger"> = {
@@ -31,9 +32,9 @@ const ACTION_VARIANTS: Record<DecisionActionKind, "primary" | "secondary" | "dan
 };
 
 const OVERRIDE_ACTION_TYPE_OPTIONS = [
-  { value: "IGNORED_RECOMMENDATION", label: "Ignored the recommendation" },
-  { value: "PARTIALLY_FOLLOWED_RECOMMENDATION", label: "Partially followed it" },
-  { value: "CUSTOM_ACTION", label: "Did something else entirely" },
+  { value: "IGNORED_RECOMMENDATION", label: OVERRIDE_ACTION_TYPE_LABELS.IGNORED_RECOMMENDATION },
+  { value: "PARTIALLY_FOLLOWED_RECOMMENDATION", label: OVERRIDE_ACTION_TYPE_LABELS.PARTIALLY_FOLLOWED_RECOMMENDATION },
+  { value: "CUSTOM_ACTION", label: OVERRIDE_ACTION_TYPE_LABELS.CUSTOM_ACTION },
 ] as const;
 
 type OverrideActionType = (typeof OVERRIDE_ACTION_TYPE_OPTIONS)[number]["value"];
@@ -94,7 +95,7 @@ export function DecisionActions({
   if (availableActions.length === 0) {
     return (
       <p className="text-sm text-neutral-400">
-        No further action available — this decision is {currentStatus.toLowerCase()}.
+        No hay más acciones disponibles — el estado de esta decisión es &ldquo;{DECISION_STATUS_LABELS[currentStatus]}&rdquo;.
       </p>
     );
   }
@@ -113,7 +114,7 @@ export function DecisionActions({
         <div className="space-y-3">
           {activeAction === "OVERRIDE" && (
             <SelectField
-              label="What did the advisor do instead?"
+              label="¿Qué hizo el asesor en su lugar?"
               id="override-action-type"
               value={overrideActionType}
               onChange={(e) => setOverrideActionType(e.target.value as OverrideActionType)}
@@ -126,7 +127,7 @@ export function DecisionActions({
             </SelectField>
           )}
           <TextAreaField
-            label={activeAction === "OVERRIDE" ? "What did you do instead?" : "Why are you rejecting this?"}
+            label={activeAction === "OVERRIDE" ? "¿Qué hiciste en su lugar?" : "¿Por qué estás rechazando esto?"}
             id="decision-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -146,7 +147,7 @@ export function DecisionActions({
               disabled={isPending || (isConfirmingThis && note.trim().length === 0)}
               onClick={() => handleClick(action)}
             >
-              {isConfirmingThis ? `Confirm ${ACTION_LABELS[action].toLowerCase()}` : ACTION_LABELS[action]}
+              {isConfirmingThis ? `Confirmar: ${DECISION_ACTION_LABELS[ACTION_KEY_BY_KIND[action]].toLowerCase()}` : DECISION_ACTION_LABELS[ACTION_KEY_BY_KIND[action]]}
             </Button>
           );
         })}

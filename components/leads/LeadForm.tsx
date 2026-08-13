@@ -11,24 +11,24 @@ export function LeadForm() {
   return (
     <form action={action} className="space-y-4">
       <TextField
-        label="Name"
+        label="Nombre"
         id="name"
         required
-        placeholder="Customer name"
+        placeholder="Nombre del cliente"
         error={state?.errors?.name?.[0]}
       />
       <TextField
-        label="WhatsApp number"
+        label="Número de WhatsApp"
         id="phone"
         required
-        placeholder="+52 1 55 1234 5678"
+        placeholder="+51 999 999 999"
         error={state?.errors?.phone?.[0]}
       />
-      <SelectField label="Priority" id="priority" defaultValue="NORMAL">
+      <SelectField label="Prioridad" id="priority" defaultValue="NORMAL">
         <option value="NORMAL">Normal</option>
-        <option value="HIGH">High</option>
+        <option value="HIGH">Alta</option>
       </SelectField>
-      <SubmitButton pendingText="Saving…">Save lead</SubmitButton>
+      <SubmitButton pendingText="Guardando…">Guardar cliente</SubmitButton>
     </form>
   );
 }

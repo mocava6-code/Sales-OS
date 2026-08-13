@@ -1,4 +1,5 @@
 import { completeFollowUpAction } from "@/server/actions/follow-ups";
+import { formatDate } from "@/lib/copy/format";
 
 export function FollowUpItem({
   id,
@@ -18,7 +19,7 @@ export function FollowUpItem({
       <div className="min-w-0">
         <p className="truncate font-medium text-neutral-900">{leadName}</p>
         <p className="truncate text-sm text-neutral-500">
-          Due {dueAt.toLocaleDateString()}
+          Vence {formatDate(dueAt)}
           {note ? ` — ${note}` : ""}
         </p>
       </div>
@@ -29,7 +30,7 @@ export function FollowUpItem({
           type="submit"
           className="shrink-0 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 active:bg-neutral-100"
         >
-          Done
+          Listo
         </button>
       </form>
     </li>

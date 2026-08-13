@@ -18,7 +18,7 @@ describe("leadSchema — phone normalization (Kori Data Correctness Phase 1D)", 
     const result = leadSchema.safeParse({ name: "Juan Pérez", phone: "123" });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.flatten().fieldErrors.phone).toEqual(["Enter a valid phone number."]);
+      expect(result.error.flatten().fieldErrors.phone).toEqual(["Ingresa un número de teléfono válido."]);
     }
   });
 

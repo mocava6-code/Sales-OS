@@ -3,11 +3,12 @@ import { verifySession } from "@/lib/auth/dal";
 import { Card } from "@/components/ui/Card";
 import { CandidateReviewActions } from "@/components/knowledge/CandidateReviewActions";
 import { getKnowledgeCandidateCounts, listKnowledgeCandidates, type CandidateFilter } from "@/server/knowledge/queries";
+import { BEHAVIOR_CATEGORY_LABELS, KNOWLEDGE_CATEGORY_LABELS } from "@/lib/copy/labels";
 
 const TABS: { value: CandidateFilter; label: string }[] = [
-  { value: "NEW", label: "New" },
-  { value: "CONFLICT", label: "Conflicts" },
-  { value: "REPEATED", label: "Repeated" },
+  { value: "NEW", label: "Nuevos" },
+  { value: "CONFLICT", label: "Conflictos" },
+  { value: "REPEATED", label: "Repetidos" },
 ];
 
 function isCandidateFilter(value: string | undefined): value is CandidateFilter {
@@ -28,7 +29,7 @@ export default async function KnowledgeCandidatesPage({ searchParams }: { search
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-neutral-900">Candidates</h1>
+      <h1 className="text-2xl font-semibold text-neutral-900">Candidatos</h1>
 
       <div className="flex gap-2">
         {TABS.map((t) => (
@@ -45,7 +46,7 @@ export default async function KnowledgeCandidatesPage({ searchParams }: { search
       </div>
 
       <div className="space-y-3">
-        {candidates.length === 0 && <p className="text-sm text-neutral-500">Nothing here.</p>}
+        {candidates.length === 0 && <p className="text-sm text-neutral-500">No hay nada aquí.</p>}
         {candidates.map((candidate) => (
           <Card key={candidate.id} className="space-y-2">
             <div>
@@ -53,13 +54,16 @@ export default async function KnowledgeCandidatesPage({ searchParams }: { search
               <p className="text-sm text-neutral-700">{candidate.statement}</p>
             </div>
             <p className="text-xs text-neutral-400">
-              {candidate.class === "FACTUAL" ? candidate.proposedFactualCategory : candidate.proposedBehaviorCategory} · confidence{" "}
-              {Math.round(candidate.confidence * 100)}% · seen {candidate.occurrenceCount}×
+              {candidate.class === "FACTUAL"
+                ? (candidate.proposedFactualCategory ? KNOWLEDGE_CATEGORY_LABELS[candidate.proposedFactualCategory] : null)
+                : (candidate.proposedBehaviorCategory ? BEHAVIOR_CATEGORY_LABELS[candidate.proposedBehaviorCategory] : null)}{" "}
+              · confianza{" "}
+              {Math.round(candidate.confidence * 100)}% · visto {candidate.occurrenceCount}×
             </p>
             {candidate.evidence[0] && <p className="rounded-lg bg-neutral-50 p-2 text-xs italic text-neutral-500">&ldquo;{candidate.evidence[0].evidenceText}&rdquo;</p>}
             {tab === "CONFLICT" && candidate.relationships.length > 0 && (
               <div className="rounded-lg bg-red-50 p-2 text-xs text-red-700">
-                Conflicts with:{" "}
+                Entra en conflicto con:{" "}
                 {candidate.relationships
                   .filter((r) => r.classification === "CONTRADICTORY")
                   .map((r) => r.targetCandidate?.statement ?? r.targetKnowledgeItem?.content ?? r.targetOperationalInsight?.statement)

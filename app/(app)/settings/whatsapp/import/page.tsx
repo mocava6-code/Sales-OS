@@ -9,8 +9,8 @@ export default async function ImportWhatsAppHistoryPage() {
   if (user.role !== "OWNER") {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold text-neutral-900">Import chat history</h1>
-        <Card className="text-sm text-neutral-500">Only the business owner can import chat history.</Card>
+        <h1 className="text-2xl font-semibold text-neutral-900">Importar historial de chat</h1>
+        <Card className="text-sm text-neutral-500">Solo el propietario del negocio puede importar historial de chat.</Card>
       </div>
     );
   }
@@ -19,10 +19,10 @@ export default async function ImportWhatsAppHistoryPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-neutral-900">Import chat history</h1>
+      <h1 className="text-2xl font-semibold text-neutral-900">Importar historial de chat</h1>
       <p className="text-sm text-neutral-500">
-        Backfill a Lead&apos;s Conversation from an exported WhatsApp chat (.txt or .zip). This never sends a message,
-        contacts Meta, or affects live WhatsApp ingestion — it only writes past messages into the CRM.
+        Carga la conversación de un cliente desde un chat de WhatsApp exportado (.txt o .zip). Esto nunca envía un mensaje,
+        contacta a Meta, ni afecta la recepción en vivo de WhatsApp — solo registra mensajes pasados en el CRM.
       </p>
 
       <WhatsAppHistoryImportPanel defaultTimezone={business?.timezone ?? "America/Lima"} />

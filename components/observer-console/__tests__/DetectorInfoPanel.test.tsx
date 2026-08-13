@@ -32,7 +32,7 @@ describe("DetectorInfoPanel", () => {
   it("labels the keyword sample explicitly as not the exact match", () => {
     render(<DetectorInfoPanel observation={observation()} />);
 
-    expect(screen.getByText(/Sample keywords \(not the exact match\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Palabras clave de ejemplo \(no la coincidencia exacta\)/)).toBeInTheDocument();
     expect(screen.getByText(/precio, cuánto cuesta/)).toBeInTheDocument();
   });
 
@@ -47,7 +47,7 @@ describe("DetectorInfoPanel", () => {
       />,
     );
 
-    expect(screen.queryByText(/Sample keywords/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Palabras clave de ejemplo/)).not.toBeInTheDocument();
   });
 
   it("shows the message excerpt when present, omits it when null", () => {
@@ -55,6 +55,6 @@ describe("DetectorInfoPanel", () => {
     expect(screen.getByText(/cuánto cuesta\?/)).toBeInTheDocument();
 
     rerender(<DetectorInfoPanel observation={observation({ evidenceExcerpt: null })} />);
-    expect(screen.queryByText("Message excerpt")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fragmento del mensaje")).not.toBeInTheDocument();
   });
 });

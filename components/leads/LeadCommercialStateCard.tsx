@@ -1,26 +1,7 @@
 import { Card } from "@/components/ui/Card";
 import type { FieldDisplayDTO, LeadCommercialStateDTO } from "@/server/lead-commercial-state/types";
-
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  NOT_REQUESTED: "Not requested",
-  AWAITING_PAYMENT: "Awaiting payment",
-  PAYMENT_CONFIRMED: "Payment confirmed",
-};
-
-const CONVERSATION_STATE_LABELS: Record<LeadCommercialStateDTO["conversationState"], string> = {
-  NEEDS_REPLY: "Needs reply",
-  WAITING_ON_CUSTOMER: "Waiting on customer",
-  CLOSED: "Closed",
-};
-
-const NEXT_ACTION_LABELS: Record<string, string> = {
-  ANSWER_QUESTION: "Answer question",
-  CONFIRM_PAYMENT: "Confirm payment",
-  SCHEDULE_DELIVERY: "Schedule delivery",
-  SEND_QUOTE: "Send quote",
-  FOLLOW_UP: "Follow up",
-  NONE: "No action needed",
-};
+import { formatDateTime } from "@/lib/copy/format";
+import { CONVERSATION_STATUS_LABELS, NEXT_ACTION_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/copy/labels";
 
 /** The "confidence/evidence affordance" — reasoning when present, otherwise the raw message excerpt that grounds the value, otherwise nothing to show. */
 function buildDetail(field: Pick<FieldDisplayDTO<unknown>, "reasoning" | "evidenceExcerpt">): string | null {
@@ -37,7 +18,7 @@ function FieldRow({ label, value, detail }: { label: string; value: string | nul
         {value ?? <span className="text-neutral-300">—</span>}
         {detail && (
           <details className="mt-0.5">
-            <summary className="cursor-pointer text-xs text-neutral-400">why?</summary>
+            <summary className="cursor-pointer text-xs text-neutral-400">¿por qué?</summary>
             <p className="mt-1 text-xs text-neutral-500">{detail}</p>
           </details>
         )}
@@ -46,39 +27,39 @@ function FieldRow({ label, value, detail }: { label: string; value: string | nul
   );
 }
 
-function formatDateTime(iso: string | null): string | null {
-  return iso ? new Date(iso).toLocaleString() : null;
+function formatIsoDateTime(iso: string | null): string | null {
+  return iso ? formatDateTime(new Date(iso)) : null;
 }
 
 export function LeadCommercialStateCard({ state }: { state: LeadCommercialStateDTO }) {
   return (
     <Card className="space-y-3" data-testid="lead-commercial-state-card">
-      <h2 className="text-sm font-medium text-neutral-500">Commercial state</h2>
+      <h2 className="text-sm font-medium text-neutral-500">Estado comercial</h2>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-        <FieldRow label="Product interest" value={state.productInterest.value} detail={buildDetail(state.productInterest)} />
-        <FieldRow label="Vehicle model" value={state.vehicleModel.value} detail={buildDetail(state.vehicleModel)} />
-        <FieldRow label="Delivery location" value={state.deliveryLocation.value} detail={buildDetail(state.deliveryLocation)} />
+        <FieldRow label="Producto de interés" value={state.productInterest.value} detail={buildDetail(state.productInterest)} />
+        <FieldRow label="Modelo del vehículo" value={state.vehicleModel.value} detail={buildDetail(state.vehicleModel)} />
+        <FieldRow label="Lugar de entrega" value={state.deliveryLocation.value} detail={buildDetail(state.deliveryLocation)} />
         <FieldRow
-          label="Requested delivery"
-          value={formatDateTime(state.requestedDeliveryAt.value)}
+          label="Entrega solicitada"
+          value={formatIsoDateTime(state.requestedDeliveryAt.value)}
           detail={buildDetail(state.requestedDeliveryAt)}
         />
         <FieldRow
-          label="Payment status"
+          label="Estado de pago"
           value={state.paymentStatus.value ? PAYMENT_STATUS_LABELS[state.paymentStatus.value] : null}
           detail={buildDetail(state.paymentStatus)}
         />
         <FieldRow
-          label="Last contact"
-          value={`${formatDateTime(state.lastContactAt)} · ${state.lastContactDirection === "OUTBOUND" ? "you" : "customer"}`}
+          label="Último contacto"
+          value={`${formatIsoDateTime(state.lastContactAt)} · ${state.lastContactDirection === "OUTBOUND" ? "tú" : "cliente"}`}
         />
-        <FieldRow label="Conversation state" value={CONVERSATION_STATE_LABELS[state.conversationState]} />
+        <FieldRow label="Estado de la conversación" value={CONVERSATION_STATUS_LABELS[state.conversationState]} />
         <FieldRow
-          label="Next action"
+          label="Próxima acción"
           value={NEXT_ACTION_LABELS[state.nextAction.value ?? "NONE"]}
           detail={buildDetail(state.nextAction)}
         />
-        <FieldRow label="Follow-up due" value={formatDateTime(state.followUpDueAt.value)} detail={buildDetail(state.followUpDueAt)} />
+        <FieldRow label="Seguimiento vence" value={formatIsoDateTime(state.followUpDueAt.value)} detail={buildDetail(state.followUpDueAt)} />
       </dl>
     </Card>
   );

@@ -25,14 +25,14 @@ describe("TimelineEventCard", () => {
   it("renders the event type label and the conversation entry's content", () => {
     render(<TimelineEventCard event={event()} />);
 
-    expect(screen.getByText("Message received")).toBeInTheDocument();
+    expect(screen.getByText("Mensaje recibido")).toBeInTheDocument();
     expect(screen.getByText(/cuánto cuesta\?/)).toBeInTheDocument();
   });
 
   it("shows a 'no observations' message when the event derived none", () => {
     render(<TimelineEventCard event={event({ observations: [] })} />);
 
-    expect(screen.getByText("No observations derived from this event.")).toBeInTheDocument();
+    expect(screen.getByText("No se derivaron observaciones de este evento.")).toBeInTheDocument();
   });
 
   it("renders one ObservationBadge per derived observation", () => {
@@ -63,7 +63,7 @@ describe("TimelineEventCard", () => {
 
     expect(screen.getByText("PRICE_REQUEST")).toBeInTheDocument();
     expect(screen.getByText("DISCOUNT_NEGOTIATION")).toBeInTheDocument();
-    expect(screen.queryByText("No observations derived from this event.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No se derivaron observaciones de este evento.")).not.toBeInTheDocument();
   });
 
   it("renders no conversation entry content for a conversation-level event", () => {
@@ -73,7 +73,7 @@ describe("TimelineEventCard", () => {
       />,
     );
 
-    expect(screen.getByText("Conversation created")).toBeInTheDocument();
+    expect(screen.getByText("Conversación creada")).toBeInTheDocument();
     expect(screen.queryByText(/\[INBOUND\]/)).not.toBeInTheDocument();
   });
 });

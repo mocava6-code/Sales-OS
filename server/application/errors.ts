@@ -68,14 +68,14 @@ export class UnauthenticatedError extends ApplicationBoundaryError {
   readonly code = "UNAUTHENTICATED" as const;
 
   constructor() {
-    super("You must be signed in to do that.");
+    super("Debes iniciar sesión para hacer eso.");
   }
 }
 
 export class ForbiddenError extends ApplicationBoundaryError {
   readonly code = "FORBIDDEN" as const;
 
-  constructor(message = "You don't have permission to do that.") {
+  constructor(message = "Tu sesión no tiene acceso a esta función.") {
     super(message);
   }
 }
@@ -84,7 +84,7 @@ export class NotFoundError extends ApplicationBoundaryError {
   readonly code = "NOT_FOUND" as const;
 
   constructor(resource: string) {
-    super(`${resource} not found.`);
+    super(`No encontramos ${resource}.`);
   }
 }
 
@@ -92,7 +92,7 @@ export class InvalidInputError extends ApplicationBoundaryError {
   readonly code = "INVALID_INPUT" as const;
 
   constructor(public readonly fieldErrors: Record<string, string[] | undefined>) {
-    super("Please check your input and try again.");
+    super("Revisa los datos ingresados e inténtalo de nuevo.");
   }
 }
 
@@ -100,7 +100,7 @@ export class AnalysisInProgressError extends ApplicationBoundaryError {
   readonly code = "ANALYSIS_IN_PROGRESS" as const;
 
   constructor() {
-    super("This conversation is already being analyzed. Try again in a moment.");
+    super("Esta conversación ya se está analizando. Inténtalo de nuevo en un momento.");
   }
 }
 
@@ -125,19 +125,19 @@ export function toApplicationError(error: unknown): ApplicationError {
   }
 
   if (error instanceof DecisionNotFoundError) {
-    return { code: "NOT_FOUND", message: "That decision could not be found." };
+    return { code: "NOT_FOUND", message: "No encontramos esa decisión." };
   }
 
   if (error instanceof InvalidDecisionStatusTransitionError) {
-    return { code: "INVALID_TRANSITION", message: `This decision can't move from ${error.from} to ${error.to}.` };
+    return { code: "INVALID_TRANSITION", message: `Esta decisión no puede pasar de ${error.from} a ${error.to}.` };
   }
 
   if (error instanceof KnowledgeCandidateNotFoundError) {
-    return { code: "NOT_FOUND", message: "That knowledge candidate could not be found." };
+    return { code: "NOT_FOUND", message: "No encontramos ese candidato de conocimiento." };
   }
 
   if (error instanceof InvalidCandidateStatusTransitionError) {
-    return { code: "INVALID_TRANSITION", message: `This candidate can't move from ${error.from} to ${error.to} — it's already been reviewed.` };
+    return { code: "INVALID_TRANSITION", message: `Este candidato no puede pasar de ${error.from} a ${error.to} — ya fue revisado.` };
   }
 
   if (error instanceof OutcomeNotAllowedForDecisionStatusError || error instanceof MissingOutcomeAttributionError) {
@@ -147,18 +147,18 @@ export function toApplicationError(error: unknown): ApplicationError {
   if (error instanceof CriticalInformationMissingError) {
     return {
       code: "MISSING_CRITICAL_INFORMATION",
-      message: "There isn't enough information yet to analyze this conversation.",
+      message: "Todavía no hay suficiente información para analizar esta conversación.",
     };
   }
 
   if (error instanceof ConversationAnalysisFailedError || error instanceof DecisionGenerationFailedError) {
     return isProviderUnavailableCause(error.cause)
-      ? { code: "PROVIDER_UNAVAILABLE", message: "Kori's AI provider is unavailable right now. Try again shortly." }
-      : { code: "ORCHESTRATION_FAILURE", message: "Kori couldn't finish analyzing this conversation. Try again shortly." };
+      ? { code: "PROVIDER_UNAVAILABLE", message: "Kori no está disponible en este momento. Inténtalo nuevamente en unos minutos." }
+      : { code: "ORCHESTRATION_FAILURE", message: "Kori no pudo terminar de analizar esta conversación. Inténtalo nuevamente en unos minutos." };
   }
 
   if (error instanceof OrchestrationTransactionError) {
-    return { code: "ORCHESTRATION_FAILURE", message: "That action couldn't be completed. Nothing was changed — try again." };
+    return { code: "ORCHESTRATION_FAILURE", message: "No se pudo completar esa acción. No se realizó ningún cambio — inténtalo de nuevo." };
   }
 
   // Kori NL query errors — never surface `.cause` (a sanitized Groq error
@@ -166,18 +166,18 @@ export function toApplicationError(error: unknown): ApplicationError {
   // messages; that's exactly the kind of provider/internal detail this
   // mapping function exists to keep off the client.
   if (error instanceof UnsupportedKoriQuestionError || error instanceof InvalidKoriQuerySpecError) {
-    return { code: "UNSUPPORTED_QUESTION", message: "Kori can't answer that question yet." };
+    return { code: "UNSUPPORTED_QUESTION", message: "Kori todavía no puede responder ese tipo de consulta." };
   }
 
   if (error instanceof KoriProviderRateLimitedError) {
-    return { code: "RATE_LIMITED", message: "Kori is temporarily rate-limited. Please try again in a moment." };
+    return { code: "RATE_LIMITED", message: "Kori está temporalmente saturado. Inténtalo de nuevo en un momento." };
   }
 
   if (error instanceof KoriAIConfigurationError || error instanceof KoriNaturalLanguageParseError) {
-    return { code: "PROVIDER_UNAVAILABLE", message: "Kori's AI provider is unavailable right now. Try again shortly." };
+    return { code: "PROVIDER_UNAVAILABLE", message: "Kori no está disponible en este momento. Inténtalo nuevamente en unos minutos." };
   }
 
-  return { code: "INTERNAL_ERROR", message: "Something went wrong. Try again shortly." };
+  return { code: "INTERNAL_ERROR", message: "Ocurrió un error. Inténtalo nuevamente en unos minutos." };
 }
 
 /** Every application handler's outermost boundary — no exception ever escapes uncaught. */

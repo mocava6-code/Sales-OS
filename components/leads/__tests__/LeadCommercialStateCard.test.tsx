@@ -31,15 +31,15 @@ describe("LeadCommercialStateCard", () => {
     expect(screen.getByText("Hilux TRAVO 2026 kit")).toBeInTheDocument();
     expect(screen.getByText("Hilux TRAVO 2026")).toBeInTheDocument();
     expect(screen.getByText("Chaclacayo")).toBeInTheDocument();
-    expect(screen.getByText("Awaiting payment")).toBeInTheDocument();
-    expect(screen.getByText("Waiting on customer")).toBeInTheDocument();
-    expect(screen.getByText("Confirm payment")).toBeInTheDocument();
+    expect(screen.getByText("Esperando pago")).toBeInTheDocument();
+    expect(screen.getByText("Esperando al cliente")).toBeInTheDocument();
+    expect(screen.getByText("Confirmar pago")).toBeInTheDocument();
   });
 
   it("shows an evidence/reasoning affordance for fields that have one", () => {
     render(<LeadCommercialStateCard state={workedExampleState()} />);
 
-    const whyToggles = screen.getAllByText("why?");
+    const whyToggles = screen.getAllByText("¿por qué?");
     expect(whyToggles.length).toBeGreaterThan(0);
     expect(screen.getByText(/Matched against a known Peru district\/city gazetteer/)).toBeInTheDocument();
   });

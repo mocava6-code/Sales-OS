@@ -46,7 +46,7 @@ export function ImportConversationPanel() {
       // so uploads that need resolution ask the user to re-upload after
       // answering. This is a deliberate v1 simplification.
       if (result.ok && "status" in result.data && result.data.status === "NEEDS_PARTICIPANT_RESOLUTION") {
-        setView({ kind: "ERROR", message: "This export has an ambiguous sender. Re-upload and use Paste instead so we can ask which participant is Koriaki." });
+        setView({ kind: "ERROR", message: "Esta exportación tiene un remitente ambiguo. Vuelve a subirla usando Pegar para poder preguntar cuál participante es Koriaki." });
         return;
       }
       applyResult(result, null);
@@ -63,7 +63,7 @@ export function ImportConversationPanel() {
     }
     if (result.data.status === "NEEDS_PARTICIPANT_RESOLUTION") {
       if (!fallbackPending) {
-        setView({ kind: "ERROR", message: "This conversation has an ambiguous sender and couldn't be resolved." });
+        setView({ kind: "ERROR", message: "Esta conversación tiene un remitente ambiguo y no se pudo resolver." });
         return;
       }
       setView({ kind: "NEEDS_RESOLUTION", candidateLabels: result.data.candidateLabels, pending: fallbackPending });
@@ -84,8 +84,8 @@ export function ImportConversationPanel() {
   if (view.kind === "NEEDS_RESOLUTION") {
     return (
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Which participant is Koriaki?</p>
-        <p className="text-sm text-neutral-500">This is metadata resolution, not manual knowledge entry — it just tells us who&apos;s who.</p>
+        <p className="font-medium text-neutral-900">¿Cuál participante es Koriaki?</p>
+        <p className="text-sm text-neutral-500">Esto es solo para identificar quién es quién — no es una carga manual de conocimiento.</p>
         <div className="flex gap-2">
           {view.candidateLabels.map((label) => (
             <Button key={label} type="button" variant="secondary" disabled={isPending} onClick={() => handleResolve(label)}>
@@ -101,14 +101,14 @@ export function ImportConversationPanel() {
     const { summary } = view;
     return (
       <Card className="space-y-1">
-        <p className="text-sm text-neutral-900">{summary.messagesAnalyzed} messages analyzed</p>
-        <p className="text-sm text-neutral-900">{summary.candidatesFound} reusable knowledge candidates</p>
-        <p className="text-sm text-neutral-900">{summary.reinforced} existing facts reinforced</p>
+        <p className="text-sm text-neutral-900">Se analizaron {summary.messagesAnalyzed} mensajes</p>
+        <p className="text-sm text-neutral-900">{summary.candidatesFound} candidatos de conocimiento reutilizables</p>
+        <p className="text-sm text-neutral-900">{summary.reinforced} datos existentes reforzados</p>
         <p className={`text-sm ${summary.conflicts > 0 ? "text-red-600" : "text-neutral-900"}`}>
-          {summary.conflicts} conflict{summary.conflicts === 1 ? "" : "s"} detected
+          {summary.conflicts} conflicto{summary.conflicts === 1 ? "" : "s"} detectado{summary.conflicts === 1 ? "" : "s"}
         </p>
         <Button type="button" variant="secondary" className="mt-2" onClick={() => setView({ kind: "IDLE" })}>
-          Analyze another
+          Analizar otra
         </Button>
       </Card>
     );
@@ -117,17 +117,17 @@ export function ImportConversationPanel() {
   return (
     <div className="space-y-4">
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Upload WhatsApp export</p>
+        <p className="font-medium text-neutral-900">Subir exportación de WhatsApp</p>
         <input ref={fileInputRef} type="file" accept=".txt,.zip" className="block w-full text-sm" />
         <Button type="button" disabled={isPending} onClick={handleFileAnalyze}>
-          {isPending ? "Analyzing…" : "Analyze"}
+          {isPending ? "Analizando…" : "Analizar"}
         </Button>
       </Card>
 
       <Card className="space-y-3">
-        <p className="font-medium text-neutral-900">Paste conversation</p>
+        <p className="font-medium text-neutral-900">Pegar conversación</p>
         <TextAreaField
-          label="Conversation text"
+          label="Texto de la conversación"
           id="pasted-conversation"
           rows={8}
           value={pastedText}
@@ -135,7 +135,7 @@ export function ImportConversationPanel() {
           placeholder="27/07/26, 14:05 - Juan Pérez: Hola…"
         />
         <Button type="button" disabled={isPending || pastedText.trim().length === 0} onClick={handlePasteAnalyze}>
-          {isPending ? "Analyzing…" : "Analyze"}
+          {isPending ? "Analizando…" : "Analizar"}
         </Button>
       </Card>
 

@@ -11,7 +11,7 @@ export async function requestMagicLink(
   const email = String(formData.get("email") ?? "").trim();
 
   if (!email || !email.includes("@")) {
-    return { message: "Enter a valid email address." };
+    return { message: "Ingresa un correo electrónico válido." };
   }
 
   console.log("[login/requestMagicLink] server action invoked");
@@ -38,5 +38,5 @@ export async function requestMagicLink(
   // Deliberately generic: Supabase's own auth.users table doesn't know about
   // our seeded User table, so this response can't confirm or deny whether
   // the email is provisioned either way.
-  return { message: "If this account is registered, check your email for a sign-in link." };
+  return { message: "Si esta cuenta está registrada, revisa tu correo para encontrar el enlace de acceso." };
 }

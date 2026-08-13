@@ -30,7 +30,7 @@ export async function createFollowUpAction(
   try {
     await createFollowUp(user.businessId, user.id, parsed.data);
   } catch {
-    return { formError: "That lead could not be found." };
+    return { formError: "No se pudo encontrar ese cliente." };
   }
 
   revalidatePath(`/leads/${leadId}`);

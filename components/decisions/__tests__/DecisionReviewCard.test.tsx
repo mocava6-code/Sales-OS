@@ -48,16 +48,16 @@ describe("DecisionReviewCard — 12. renders recommendation, reasoning, risk, ev
       screen.getByText("Ask the customer to confirm the exact Hilux trim before quoting a price."),
     ).toBeInTheDocument();
     expect(screen.getByText("Vehicle year and trim are not yet verified.")).toBeInTheDocument();
-    expect(screen.getByText("Proposed")).toBeInTheDocument();
+    expect(screen.getByText("Propuesta")).toBeInTheDocument();
   });
 
   it("renders risk, impact, confidence, and approval requirement badges", () => {
     render(<DecisionReviewCard decision={buildDecision()} />);
 
-    expect(screen.getByText("Medium risk")).toBeInTheDocument();
-    expect(screen.getByText("Medium impact")).toBeInTheDocument();
-    expect(screen.getByText("Confidence 70%")).toBeInTheDocument();
-    expect(screen.getByText("Needs advisor approval")).toBeInTheDocument();
+    expect(screen.getByText("Riesgo medio")).toBeInTheDocument();
+    expect(screen.getByText("Impacto medio")).toBeInTheDocument();
+    expect(screen.getByText("Confianza 70%")).toBeInTheDocument();
+    expect(screen.getByText("Necesita aprobación del asesor")).toBeInTheDocument();
   });
 
   it("renders evidence entries", () => {
@@ -73,13 +73,13 @@ describe("DecisionReviewCard — 12. renders recommendation, reasoning, risk, ev
 
   it("omits the evidence section entirely when there is none", () => {
     render(<DecisionReviewCard decision={buildDecision({ evidence: [] })} />);
-    expect(screen.queryByText("Evidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evidencia")).not.toBeInTheDocument();
   });
 
   it("shows model/provider/prompt version metadata inside the collapsible technical section", () => {
     render(<DecisionReviewCard decision={buildDecision()} />);
 
-    const details = screen.getByText("Technical details").closest("details");
+    const details = screen.getByText("Detalles técnicos").closest("details");
     expect(details).not.toBeNull();
     expect(screen.getByText("claude-test")).toBeInTheDocument();
     expect(screen.getByText("kori-decision-v1")).toBeInTheDocument();
@@ -90,11 +90,11 @@ describe("DecisionReviewCard — 12. renders recommendation, reasoning, risk, ev
     (status) => {
       render(<DecisionReviewCard decision={buildDecision({ status })} />);
       const labels: Record<string, string> = {
-        PROPOSED: "Proposed",
-        APPROVED: "Approved",
-        REJECTED: "Rejected",
-        EXECUTED: "Executed",
-        OVERRIDDEN: "Overridden",
+        PROPOSED: "Propuesta",
+        APPROVED: "Aprobada",
+        REJECTED: "Rechazada",
+        EXECUTED: "Ejecutada",
+        OVERRIDDEN: "Reemplazada por el asesor",
       };
       expect(screen.getByText(labels[status])).toBeInTheDocument();
     },

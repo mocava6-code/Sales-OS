@@ -20,7 +20,7 @@ export default async function InternalLayout({ children }: { children: React.Rea
   return (
     <div className="min-h-dvh bg-neutral-50">
       <header className="border-b border-neutral-200 bg-white px-6 py-3">
-        <p className="text-sm font-medium text-neutral-500">Observer Console — internal, read-only</p>
+        <p className="text-sm font-medium text-neutral-500">Consola de observación — interno, solo lectura</p>
       </header>
       <main className="mx-auto w-full max-w-5xl px-6 py-6">{children}</main>
     </div>

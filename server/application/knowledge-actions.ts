@@ -54,7 +54,7 @@ function parseOrThrow<Schema extends z.ZodTypeAny>(schema: Schema, rawInput: unk
  */
 function assertKnowledgeIngestionAccess(user: AuthenticatedUser): void {
   if (user.role !== "OWNER") {
-    throw new ForbiddenError("Only the business owner can manage Knowledge ingestion (imports, syncs, and candidate review).");
+    throw new ForbiddenError("Solo el propietario del negocio puede administrar la ingestión de conocimiento (importaciones, sincronizaciones y revisión de candidatos).");
   }
 }
 
@@ -102,7 +102,7 @@ export function analyzeConversationImportHandler(
     if (input.rawFileHash) {
       const existing = await findImportedConversationByFileHash(user.businessId, input.rawFileHash, db);
       if (existing) {
-        throw new InvalidInputError({ file: ["This file has already been imported."] });
+        throw new InvalidInputError({ file: ["Este archivo ya fue importado."] });
       }
     }
 
@@ -244,7 +244,7 @@ export function processSyncBatchHandler(
     // as every other loadAuthorized*/assert* pair in access-control.ts.
     const source = await db.knowledgeSource.findFirst({ where: { id: input.sourceId, businessId: user.businessId }, select: { id: true } });
     if (!source) {
-      throw new NotFoundError("Knowledge source");
+      throw new NotFoundError("la fuente de conocimiento");
     }
 
     const aiProvider = dependencies.aiProvider ?? getAIProvider();

@@ -6,9 +6,9 @@ import type { ConversationListItemDTO } from "@/server/observer-console/types";
 import { ConversationListItem } from "./ConversationListItem";
 
 const OBSERVATION_STATE_OPTIONS = [
-  { value: "ANY", label: "Any" },
-  { value: "HAS_ANY", label: "Has observations" },
-  { value: "HAS_NONE", label: "No observations" },
+  { value: "ANY", label: "Cualquiera" },
+  { value: "HAS_ANY", label: "Con observaciones" },
+  { value: "HAS_NONE", label: "Sin observaciones" },
 ] as const;
 
 type ObservationStateOption = (typeof OBSERVATION_STATE_OPTIONS)[number]["value"];
@@ -56,7 +56,7 @@ export function ConversationPicker({ initialResults }: { initialResults: Convers
           type="search"
           value={searchText}
           onChange={(event) => setSearchText(event.target.value)}
-          placeholder="Search by lead name or phone"
+          placeholder="Buscar por nombre o teléfono del cliente"
           className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-900 focus:outline-none"
         />
         <select
@@ -75,7 +75,7 @@ export function ConversationPicker({ initialResults }: { initialResults: Convers
           disabled={isPending}
           className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:bg-neutral-300"
         >
-          {isPending ? "Searching…" : "Search"}
+          {isPending ? "Buscando…" : "Buscar"}
         </button>
       </form>
 
@@ -83,7 +83,7 @@ export function ConversationPicker({ initialResults }: { initialResults: Convers
 
       <div className="space-y-2">
         {results.length === 0 ? (
-          <p className="text-sm text-neutral-500">No conversations match.</p>
+          <p className="text-sm text-neutral-500">No hay conversaciones que coincidan.</p>
         ) : (
           results.map((conversation) => <ConversationListItem key={conversation.id} conversation={conversation} />)
         )}

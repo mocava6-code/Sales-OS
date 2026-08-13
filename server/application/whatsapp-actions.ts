@@ -89,7 +89,7 @@ export function queueWhatsAppReplyHandler(
 
     const conversation = await loadConversation(user, input.conversationId);
     if (!conversation.whatsappPhoneNumberId) {
-      throw new InvalidInputError({ conversationId: ["This conversation has no WhatsApp number associated with it."] });
+      throw new InvalidInputError({ conversationId: ["Esta conversación no tiene un número de WhatsApp asociado."] });
     }
 
     const message = await enqueue({
@@ -193,7 +193,7 @@ export function sendQueuedReplyHandler(
  */
 function assertPhoneNumberManagementAccess(user: AuthenticatedUser): void {
   if (user.role !== "OWNER") {
-    throw new ForbiddenError("Only the business owner can register a WhatsApp number.");
+    throw new ForbiddenError("Solo el propietario del negocio puede registrar un número de WhatsApp.");
   }
 }
 
@@ -236,7 +236,7 @@ export function registerWhatsAppPhoneNumberHandler(
  */
 function assertHistoricalImportAccess(user: AuthenticatedUser): void {
   if (user.role !== "OWNER") {
-    throw new ForbiddenError("Only the business owner can import WhatsApp chat history.");
+    throw new ForbiddenError("Solo el propietario del negocio puede importar historial de chat de WhatsApp.");
   }
 }
 
@@ -294,7 +294,7 @@ export function previewHistoricalImportHandler(
     // Reject the whole chat here rather than silently importing zero messages.
     if (!parsed.resolution.businessSenderLabel || parsed.participantLabels.length !== 2) {
       throw new InvalidInputError({
-        rawText: ["This chat has more than 2 participants or couldn't be resolved to a customer/business pair — group chat exports aren't supported."],
+        rawText: ["Este chat tiene más de 2 participantes o no se pudo resolver a un par cliente/negocio — no se admiten exportaciones de chats grupales."],
       });
     }
 
@@ -385,7 +385,7 @@ export function importHistoricalWhatsAppChatHandler(
       // Defense-in-depth — this handler never trusts that a prior preview
       // call happened; the DB write below must never be reachable with an
       // UNKNOWN role still possible for a determinable participant.
-      throw new InvalidInputError({ rawText: ["This chat couldn't be resolved — re-run the preview step first."] });
+      throw new InvalidInputError({ rawText: ["Este chat no se pudo resolver — vuelve a ejecutar el paso de vista previa primero."] });
     }
 
     const skippedUnparseableTimestampCount = parsed.messages.filter((m) => m.occurredAt === null).length;

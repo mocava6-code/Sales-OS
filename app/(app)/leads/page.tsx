@@ -10,17 +10,17 @@ export default async function LeadsPage() {
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-neutral-900">Leads</h1>
+        <h1 className="text-2xl font-semibold text-neutral-900">Clientes</h1>
         <Link
           href="/leads/new"
           className="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
         >
-          New lead
+          Nuevo cliente
         </Link>
       </header>
 
       {leads.length === 0 ? (
-        <Card className="text-sm text-neutral-500">No leads yet — add your first one.</Card>
+        <Card className="text-sm text-neutral-500">Todavía no hay clientes — agrega el primero.</Card>
       ) : (
         <ul className="space-y-2">
           {leads.map((lead) => (
@@ -33,7 +33,7 @@ export default async function LeadsPage() {
                   </div>
                   {lead.priority === "HIGH" && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                      High priority
+                      Alta prioridad
                     </span>
                   )}
                 </Card>

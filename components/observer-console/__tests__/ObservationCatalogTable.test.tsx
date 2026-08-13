@@ -7,7 +7,7 @@ describe("ObservationCatalogTable", () => {
   it("shows a placeholder message when there are no observations yet", () => {
     render(<ObservationCatalogTable counts={[]} />);
 
-    expect(screen.getByText("No observations recorded yet.")).toBeInTheDocument();
+    expect(screen.getByText("Todavía no hay observaciones registradas.")).toBeInTheDocument();
   });
 
   it("renders one row per observed type with count and last-seen date", () => {

@@ -21,10 +21,10 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record override" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark executed" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aprobar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rechazar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar cambio" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Marcar como ejecutada" })).not.toBeInTheDocument();
   });
 
   it("PROPOSED + ADMIN_APPROVAL_REQUIRED: hides Approve for a SALESPERSON", () => {
@@ -37,8 +37,8 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprobar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rechazar" })).toBeInTheDocument();
   });
 
   it("PROPOSED + ADMIN_APPROVAL_REQUIRED: shows Approve for an OWNER", () => {
@@ -51,7 +51,7 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aprobar" })).toBeInTheDocument();
   });
 
   it("APPROVED: shows execute, reject, and override", () => {
@@ -64,10 +64,10 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Mark executed" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record override" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Marcar como ejecutada" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rechazar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Registrar cambio" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprobar" })).not.toBeInTheDocument();
   });
 
   it("EXECUTED: shows no action buttons, only a terminal-state message", () => {
@@ -81,7 +81,7 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
     );
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText(/executed/i)).toBeInTheDocument();
+    expect(screen.getByText(/ejecutada/i)).toBeInTheDocument();
   });
 
   it("clicking Reject shows a required note field before the confirm button is enabled", () => {
@@ -94,10 +94,10 @@ describe("DecisionActions — 13. rendered buttons match status and authorizatio
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar" }));
 
-    const confirmButton = screen.getByRole("button", { name: "Confirm reject" });
+    const confirmButton = screen.getByRole("button", { name: "Confirmar: rechazar" });
     expect(confirmButton).toBeDisabled();
-    expect(screen.getByLabelText("Why are you rejecting this?")).toBeInTheDocument();
+    expect(screen.getByLabelText("¿Por qué estás rechazando esto?")).toBeInTheDocument();
   });
 });

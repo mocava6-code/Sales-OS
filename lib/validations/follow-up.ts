@@ -4,11 +4,11 @@ export const followUpSchema = z.object({
   leadId: z.string().min(1),
   dueAt: z
     .string()
-    .min(1, { error: "Due date is required." })
+    .min(1, { error: "La fecha de vencimiento es obligatoria." })
     .transform((value, ctx) => {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) {
-        ctx.addIssue("Enter a valid date.");
+        ctx.addIssue("Ingresa una fecha válida.");
         return z.NEVER;
       }
       return date;

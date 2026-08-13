@@ -38,10 +38,10 @@ export function CandidateReviewActions({ candidateId }: { candidateId: string })
     <div className="space-y-1">
       <div className="flex gap-2">
         <Button type="button" variant="primary" disabled={isPending} onClick={handlePromote}>
-          Approve
+          Aprobar
         </Button>
         <Button type="button" variant="danger" disabled={isPending} onClick={handleReject}>
-          Reject
+          Rechazar
         </Button>
       </div>
       {error && (

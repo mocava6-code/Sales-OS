@@ -25,7 +25,7 @@ describe("UnmatchedEventsPanel", () => {
   it("shows the count and lists every unmatched event", () => {
     render(<UnmatchedEventsPanel events={[event(), event({ id: "event-2", eventType: "CONVERSATION_CLOSED" })]} />);
 
-    expect(screen.getByText("Events with no observations (2)")).toBeInTheDocument();
+    expect(screen.getByText("Eventos sin observaciones (2)")).toBeInTheDocument();
     expect(screen.getByText(/MESSAGE_SENT/)).toBeInTheDocument();
     expect(screen.getByText(/CONVERSATION_CLOSED/)).toBeInTheDocument();
   });

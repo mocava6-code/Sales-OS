@@ -25,13 +25,13 @@ export async function logConversationAction(
   const parsed = conversationSchema.safeParse({ leadId, entries });
 
   if (!parsed.success) {
-    return { formError: parsed.error.issues[0]?.message ?? "Please check the form and try again." };
+    return { formError: parsed.error.issues[0]?.message ?? "Revisa el formulario e inténtalo de nuevo." };
   }
 
   try {
     await logConversation(user.businessId, user.id, parsed.data);
   } catch {
-    return { formError: "That lead could not be found." };
+    return { formError: "No se pudo encontrar ese cliente." };
   }
 
   revalidatePath(`/leads/${leadId}`);

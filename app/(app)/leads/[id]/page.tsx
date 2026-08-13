@@ -8,6 +8,8 @@ import { LeadCommercialStateCard } from "@/components/leads/LeadCommercialStateC
 import { buildLeadCommercialState } from "@/server/lead-commercial-state/build-lead-commercial-state";
 import { NoConversationsForLeadError } from "@/server/intelligence/lead-commercial-state/errors";
 import type { LeadCommercialStateDTO } from "@/server/lead-commercial-state/types";
+import { formatDate, formatDateTime } from "@/lib/copy/format";
+import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -40,7 +42,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         <p className="text-sm text-neutral-500">{lead.phone}</p>
         {lead.priority === "HIGH" && (
           <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-            High priority
+            Alta prioridad
           </span>
         )}
       </header>
@@ -50,23 +52,23 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           href={`/leads/${lead.id}/conversations/new`}
           className="flex-1 rounded-xl bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white"
         >
-          Log conversation
+          Registrar conversación
         </Link>
         <Link
           href={`/leads/${lead.id}/follow-ups/new`}
           className="flex-1 rounded-xl border border-neutral-300 px-4 py-2.5 text-center text-sm font-medium text-neutral-700"
         >
-          Add follow-up
+          Agregar seguimiento
         </Link>
       </div>
 
       {commercialState && <LeadCommercialStateCard state={commercialState} />}
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium text-neutral-500">Follow-ups</h2>
+        <h2 className="text-sm font-medium text-neutral-500">Seguimientos</h2>
         <Card>
           {pendingFollowUps.length === 0 && otherFollowUps.length === 0 ? (
-            <p className="text-sm text-neutral-400">No follow-ups yet.</p>
+            <p className="text-sm text-neutral-400">Todavía no hay seguimientos.</p>
           ) : (
             <>
               {pendingFollowUps.length > 0 && (
@@ -87,7 +89,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                 <ul className="mt-2 space-y-1 border-t border-neutral-100 pt-2">
                   {otherFollowUps.map((followUp) => (
                     <li key={followUp.id} className="text-sm text-neutral-400 line-through">
-                      Due {followUp.dueAt.toLocaleDateString()}
+                      Vence {formatDate(followUp.dueAt)}
                       {followUp.note ? ` — ${followUp.note}` : ""}
                     </li>
                   ))}
@@ -99,22 +101,22 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium text-neutral-500">Conversations</h2>
+        <h2 className="text-sm font-medium text-neutral-500">Conversaciones</h2>
         {lead.conversations.length === 0 ? (
-          <Card className="text-sm text-neutral-400">No conversations logged yet.</Card>
+          <Card className="text-sm text-neutral-400">Todavía no hay conversaciones registradas.</Card>
         ) : (
           <div className="space-y-3">
             {lead.conversations.map((conversation) => (
               <Card key={conversation.id}>
                 <p className="text-xs font-medium text-neutral-400">
-                  {conversation.lastEntryAt.toLocaleString()} ·{" "}
-                  {conversation.status === "NEEDS_REPLY" ? "Needs reply" : "Logged"}
+                  {formatDateTime(conversation.lastEntryAt)} ·{" "}
+                  {conversation.status === "NEEDS_REPLY" ? CONVERSATION_STATUS_LABELS.NEEDS_REPLY : "Registrada"}
                 </p>
                 <ul className="mt-2 space-y-1">
                   {conversation.entries.map((entry) => (
                     <li key={entry.id} className="text-sm">
                       <span className="font-medium text-neutral-500">
-                        {entry.direction === "INBOUND" ? "Customer: " : "You: "}
+                        {entry.direction === "INBOUND" ? "Cliente: " : "Tú: "}
                       </span>
                       <span className="text-neutral-800">{entry.content}</span>
                     </li>

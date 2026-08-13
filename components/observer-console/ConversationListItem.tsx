@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import type { ConversationListItemDTO } from "@/server/observer-console/types";
+import { formatDate } from "@/lib/copy/format";
+import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
 
 export function ConversationListItem({ conversation }: { conversation: ConversationListItemDTO }) {
   return (
@@ -9,12 +11,12 @@ export function ConversationListItem({ conversation }: { conversation: Conversat
         <div>
           <p className="font-medium text-neutral-900">{conversation.leadName}</p>
           <p className="text-sm text-neutral-500">
-            {conversation.leadPhone} · {conversation.status}
+            {conversation.leadPhone} · {CONVERSATION_STATUS_LABELS[conversation.status as keyof typeof CONVERSATION_STATUS_LABELS] ?? conversation.status}
           </p>
         </div>
         <div className="text-right text-sm text-neutral-500">
-          <p>{new Date(conversation.lastEntryAt).toLocaleDateString()}</p>
-          <p>{conversation.observationCount} observation{conversation.observationCount === 1 ? "" : "s"}</p>
+          <p>{formatDate(new Date(conversation.lastEntryAt))}</p>
+          <p>{conversation.observationCount} observación{conversation.observationCount === 1 ? "" : "es"}</p>
         </div>
       </Card>
     </Link>

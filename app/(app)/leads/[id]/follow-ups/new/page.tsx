@@ -14,8 +14,8 @@ export default async function NewFollowUpPage({ params }: { params: Promise<{ id
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-neutral-900">Add follow-up</h1>
-      <p className="text-sm text-neutral-500">for {lead.name}</p>
+      <h1 className="text-2xl font-semibold text-neutral-900">Agregar seguimiento</h1>
+      <p className="text-sm text-neutral-500">para {lead.name}</p>
       <FollowUpForm leadId={lead.id} />
     </div>
   );

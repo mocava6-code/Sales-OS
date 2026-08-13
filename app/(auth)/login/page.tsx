@@ -1,8 +1,8 @@
 import { LoginForm } from "@/components/auth/LoginForm";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  auth_failed: "That sign-in link didn't work. Request a new one below.",
-  not_authorized: "This account isn't authorized for Sales OS. Contact your administrator.",
+  auth_failed: "Ese enlace de acceso no funcionó. Solicita uno nuevo abajo.",
+  not_authorized: "Esta cuenta no está autorizada para usar Sales OS. Contacta a tu administrador.",
 };
 
 export default async function LoginPage({
@@ -18,7 +18,7 @@ export default async function LoginPage({
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-neutral-900">Sales OS</h1>
-          <p className="mt-1 text-sm text-neutral-500">Sign in with your work email</p>
+          <p className="mt-1 text-sm text-neutral-500">Inicia sesión con tu correo de trabajo</p>
         </div>
         {errorMessage && (
           <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</p>

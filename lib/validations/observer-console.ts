@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const conversationIdSchema = z.string().min(1, { error: "A conversation id is required." });
+export const conversationIdSchema = z.string().min(1, { error: "Se requiere un id de conversación." });
 
 export const observationTypeSchema = z.enum([
   "PRICE_REQUEST",
@@ -35,7 +35,7 @@ export const searchConversationsSchema = z
   })
   .refine(
     (data) => !(data.observationState === "HAS_NONE" && data.hasObservationType),
-    "HAS_NONE cannot be combined with a specific observation type.",
+    "HAS_NONE no se puede combinar con un tipo de observación específico.",
   );
 
 export type GetConversationTimelineActionInput = z.infer<typeof getConversationTimelineSchema>;

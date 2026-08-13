@@ -16,18 +16,18 @@ export function DetectorInfoPanel({ observation }: { observation: ObservationTim
         </dd>
       </div>
       <div>
-        <dt className="font-medium text-neutral-600">What this means</dt>
+        <dt className="font-medium text-neutral-600">Qué significa esto</dt>
         <dd>{observation.detector.description}</dd>
       </div>
       {observation.detector.keywordSample && (
         <div>
-          <dt className="inline font-medium text-neutral-600">Sample keywords (not the exact match): </dt>
+          <dt className="inline font-medium text-neutral-600">Palabras clave de ejemplo (no la coincidencia exacta): </dt>
           <dd className="inline">{observation.detector.keywordSample.join(", ")}</dd>
         </div>
       )}
       {observation.evidenceExcerpt && (
         <div>
-          <dt className="font-medium text-neutral-600">Message excerpt</dt>
+          <dt className="font-medium text-neutral-600">Fragmento del mensaje</dt>
           <dd className="italic">&ldquo;{observation.evidenceExcerpt}&rdquo;</dd>
         </div>
       )}

@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/Card";
 import type { ConversationTimelineDTO } from "@/server/observer-console/types";
+import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
 import { TimelineEventCard } from "./TimelineEventCard";
 import { UnmatchedEventsPanel } from "./UnmatchedEventsPanel";
 
@@ -11,14 +12,14 @@ export function ConversationTimeline({ timeline }: { timeline: ConversationTimel
       <Card className="space-y-1">
         <h1 className="text-lg font-semibold text-neutral-900">{timeline.leadName}</h1>
         <p className="text-sm text-neutral-500">
-          {timeline.leadPhone} · {timeline.channel} · {timeline.status}
+          {timeline.leadPhone} · {timeline.channel} · {CONVERSATION_STATUS_LABELS[timeline.status as keyof typeof CONVERSATION_STATUS_LABELS] ?? timeline.status}
         </p>
       </Card>
 
       <div className="space-y-3">
         {timeline.events.length === 0 ? (
           <Card>
-            <p className="text-sm text-neutral-500">No domain events recorded for this conversation yet.</p>
+            <p className="text-sm text-neutral-500">Todavía no hay eventos registrados para esta conversación.</p>
           </Card>
         ) : (
           timeline.events.map((event) => <TimelineEventCard key={event.id} event={event} />)

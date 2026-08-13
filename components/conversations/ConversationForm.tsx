@@ -26,8 +26,8 @@ export function ConversationForm({ leadId }: { leadId: string }) {
                 defaultValue={index % 2 === 0 ? "INBOUND" : "OUTBOUND"}
                 className="rounded-lg border border-neutral-300 px-2 py-1 text-sm"
               >
-                <option value="INBOUND">Customer said</option>
-                <option value="OUTBOUND">You said</option>
+                <option value="INBOUND">Dijo el cliente</option>
+                <option value="OUTBOUND">Dijiste tú</option>
               </select>
               {rowIds.length > 1 && (
                 <button
@@ -35,14 +35,14 @@ export function ConversationForm({ leadId }: { leadId: string }) {
                   onClick={() => setRowIds((ids) => ids.filter((id) => id !== rowId))}
                   className="text-sm text-neutral-400"
                 >
-                  Remove
+                  Quitar
                 </button>
               )}
             </div>
             <textarea
               name="content"
               rows={3}
-              placeholder="Paste or type the message…"
+              placeholder="Pega o escribe el mensaje…"
               className="mt-2 w-full rounded-lg border border-neutral-300 px-3 py-2 text-base focus:border-neutral-900 focus:outline-none"
             />
           </div>
@@ -54,10 +54,10 @@ export function ConversationForm({ leadId }: { leadId: string }) {
         onClick={() => setRowIds((ids) => [...ids, nextRowId++])}
         className="text-sm font-medium text-neutral-700 underline"
       >
-        Add another message
+        Agregar otro mensaje
       </button>
 
-      <SubmitButton pendingText="Saving…">Save conversation</SubmitButton>
+      <SubmitButton pendingText="Guardando…">Guardar conversación</SubmitButton>
       {state?.formError && <p className="text-sm text-red-600">{state.formError}</p>}
     </form>
   );

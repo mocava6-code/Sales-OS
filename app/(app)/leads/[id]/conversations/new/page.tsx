@@ -18,8 +18,8 @@ export default async function NewConversationPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-neutral-900">Log conversation</h1>
-      <p className="text-sm text-neutral-500">with {lead.name}</p>
+      <h1 className="text-2xl font-semibold text-neutral-900">Registrar conversación</h1>
+      <p className="text-sm text-neutral-500">con {lead.name}</p>
       <ConversationForm leadId={lead.id} />
     </div>
   );

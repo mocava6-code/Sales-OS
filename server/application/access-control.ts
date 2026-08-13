@@ -26,7 +26,7 @@ export async function loadAuthorizedDecisionRecord(
   const decisionRepository = new PrismaDecisionRepository(db);
   const decision = await decisionRepository.findById(decisionRecordId);
   if (!decision || decision.businessId !== user.businessId) {
-    throw new NotFoundError("Decision");
+    throw new NotFoundError("la decisión");
   }
   return decision;
 }
@@ -55,7 +55,7 @@ export async function loadAuthorizedConversation(
   });
 
   if (!conversation) {
-    throw new NotFoundError("Conversation");
+    throw new NotFoundError("la conversación");
   }
 
   return conversation;
@@ -86,7 +86,7 @@ export async function loadAuthorizedConversationForReply(
   });
 
   if (!conversation) {
-    throw new NotFoundError("Conversation");
+    throw new NotFoundError("la conversación");
   }
 
   return {
@@ -115,7 +115,7 @@ export async function loadAuthorizedPendingMessage(
   });
 
   if (!message) {
-    throw new NotFoundError("Message");
+    throw new NotFoundError("el mensaje");
   }
 
   return message;
@@ -148,7 +148,7 @@ export async function loadAuthorizedConversationForObserverConsole(
   });
 
   if (!conversation) {
-    throw new NotFoundError("Conversation");
+    throw new NotFoundError("la conversación");
   }
 
   return {
@@ -171,7 +171,7 @@ export async function loadAuthorizedConversationForObserverConsole(
  */
 export function assertObserverConsoleAccess(user: AuthenticatedUser): void {
   if (user.role !== "OWNER") {
-    throw new ForbiddenError("Observer Console is only available to business owners.");
+    throw new ForbiddenError("La Consola de observación solo está disponible para el propietario del negocio.");
   }
 }
 
@@ -185,6 +185,6 @@ export function assertObserverConsoleAccess(user: AuthenticatedUser): void {
  */
 export function assertCanApprove(user: AuthenticatedUser, approvalRequirement: ApprovalRequirement): void {
   if (approvalRequirement === "ADMIN_APPROVAL_REQUIRED" && user.role !== "OWNER") {
-    throw new ForbiddenError("This decision requires admin approval.");
+    throw new ForbiddenError("Esta decisión necesita aprobación del administrador.");
   }
 }

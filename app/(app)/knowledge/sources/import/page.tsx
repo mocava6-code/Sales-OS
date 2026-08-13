@@ -7,15 +7,15 @@ export default async function KnowledgeImportPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-neutral-900">Conversation Imports</h1>
+      <h1 className="text-2xl font-semibold text-neutral-900">Importaciones de conversaciones</h1>
       <p className="text-sm text-neutral-500">
-        Sales OS reads the conversation and derives knowledge automatically — nothing here is manual knowledge entry.
+        Sales OS lee la conversación y obtiene el conocimiento automáticamente — nada aquí se ingresa manualmente.
       </p>
 
       {user.role === "OWNER" ? (
         <ImportConversationPanel />
       ) : (
-        <Card className="text-sm text-neutral-500">Only the business owner can import conversations.</Card>
+        <Card className="text-sm text-neutral-500">Solo el propietario del negocio puede importar conversaciones.</Card>
       )}
     </div>
   );

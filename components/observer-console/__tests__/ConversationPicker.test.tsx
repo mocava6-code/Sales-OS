@@ -31,7 +31,7 @@ describe("ConversationPicker", () => {
   it("shows a placeholder when there are no results", () => {
     render(<ConversationPicker initialResults={[]} />);
 
-    expect(screen.getByText("No conversations match.")).toBeInTheDocument();
+    expect(screen.getByText("No hay conversaciones que coincidan.")).toBeInTheDocument();
   });
 
   it("calls searchConversationsAction with the entered filters and renders the new results", async () => {
@@ -51,8 +51,8 @@ describe("ConversationPicker", () => {
 
     render(<ConversationPicker initialResults={initialResults} />);
 
-    fireEvent.change(screen.getByPlaceholderText("Search by lead name or phone"), { target: { value: "carlos" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByPlaceholderText("Buscar por nombre o teléfono del cliente"), { target: { value: "carlos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
     await waitFor(() => expect(screen.getByText("Carlos Ruiz")).toBeInTheDocument());
 
@@ -63,14 +63,14 @@ describe("ConversationPicker", () => {
   it("shows the error message and keeps prior results when the action fails", async () => {
     vi.mocked(searchConversationsAction).mockResolvedValue({
       ok: false,
-      error: { code: "FORBIDDEN", message: "You don't have permission to do that." },
+      error: { code: "FORBIDDEN", message: "No tienes permiso para hacer eso." },
     });
 
     render(<ConversationPicker initialResults={initialResults} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
 
-    await waitFor(() => expect(screen.getByText("You don't have permission to do that.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("No tienes permiso para hacer eso.")).toBeInTheDocument());
     expect(screen.getByText("Maria Gonzalez")).toBeInTheDocument();
   });
 });

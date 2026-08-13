@@ -16,10 +16,10 @@ import { formatWaitingSince } from "./waiting-duration";
 // al cliente (WAITING_ON_CUSTOMER). UNCERTAIN gets its own clearly-labeled
 // "Revisar" section — never disguised as any of the other four states.
 const SECTIONS: { key: keyof TodayActionGroups; title: string; emptyText: string }[] = [
-  { key: "replyRequired", title: "Responder ahora", emptyText: "Nothing needs a reply right now." },
-  { key: "followUpRequired", title: "Seguimiento", emptyText: "No pending follow-ups." },
-  { key: "uncertain", title: "Revisar", emptyText: "Nothing needs review." },
-  { key: "waitingOnCustomer", title: "Esperando al cliente", emptyText: "Not waiting on any customer." },
+  { key: "replyRequired", title: "Responder ahora", emptyText: "Nada necesita respuesta por ahora." },
+  { key: "followUpRequired", title: "Seguimiento", emptyText: "No hay seguimientos pendientes." },
+  { key: "uncertain", title: "Revisar", emptyText: "Nada necesita revisión." },
+  { key: "waitingOnCustomer", title: "Esperando al cliente", emptyText: "No hay conversaciones esperando al cliente." },
 ];
 
 function vehicleOrProductLine(entry: TodayActionGroupEntry): string | null {
@@ -43,7 +43,7 @@ function ActionItem({ entry, now }: { entry: TodayActionGroupEntry; now: Date })
         {vehicleLine ? <p className="truncate text-sm text-neutral-500">{vehicleLine}</p> : null}
         <p className="mt-1 text-sm text-neutral-700">{reasonLabel}</p>
         {entry.recommendedAction ? <p className="text-sm text-neutral-500">→ {entry.recommendedAction}</p> : null}
-        {entry.assignedAdvisorName ? <p className="mt-1 text-xs text-neutral-400">Assigned to {entry.assignedAdvisorName}</p> : null}
+        {entry.assignedAdvisorName ? <p className="mt-1 text-xs text-neutral-400">Asignado a {entry.assignedAdvisorName}</p> : null}
       </Link>
     </li>
   );
@@ -52,7 +52,7 @@ function ActionItem({ entry, now }: { entry: TodayActionGroupEntry; now: Date })
 export function OperationalActionsList({ groups, now }: { groups: TodayActionGroups; now: Date }) {
   return (
     <section className="space-y-4">
-      <h2 className="text-lg font-semibold text-neutral-900">Actions requiring attention</h2>
+      <h2 className="text-lg font-semibold text-neutral-900">Acciones que requieren atención</h2>
 
       {SECTIONS.map(({ key, title, emptyText }) => {
         const entries = groups[key];

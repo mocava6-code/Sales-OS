@@ -53,17 +53,17 @@ export function WebsiteSyncPanel({ defaultRootUrl }: { defaultRootUrl: string })
 
   return (
     <Card className="space-y-3">
-      <p className="font-medium text-neutral-900">Sync website</p>
-      <TextField label="Root URL" id="website-root-url" value={rootUrl} onChange={(e) => setRootUrl(e.target.value)} />
+      <p className="font-medium text-neutral-900">Sincronizar sitio web</p>
+      <TextField label="URL raíz" id="website-root-url" value={rootUrl} onChange={(e) => setRootUrl(e.target.value)} />
       <Button type="button" disabled={isPending} onClick={handleSync}>
-        {isPending ? "Syncing…" : "Sync now"}
+        {isPending ? "Sincronizando…" : "Sincronizar ahora"}
       </Button>
 
       {progress && (
         <p className="text-sm text-neutral-600">
           {progress.status === "PROCESSING"
-            ? `Processing… ${progress.completed}/${progress.total} pages`
-            : `${progress.status === "COMPLETED" ? "Completed" : progress.status === "PARTIAL" ? "Completed with some failures" : "Failed"} — ${progress.completed}/${progress.total} pages`}
+            ? `Procesando… ${progress.completed}/${progress.total} páginas`
+            : `${progress.status === "COMPLETED" ? "Completado" : progress.status === "PARTIAL" ? "Completado con algunos errores" : "Fallido"} — ${progress.completed}/${progress.total} páginas`}
         </p>
       )}
       {error && (

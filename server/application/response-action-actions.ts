@@ -22,7 +22,7 @@ import { ForbiddenError, InvalidInputError, NotFoundError, type ApplicationResul
  */
 function assertResponseActionAIBatchAccess(user: AuthenticatedUser): void {
   if (user.role !== "OWNER") {
-    throw new ForbiddenError("Only the business owner can run AI-assisted response classification.");
+    throw new ForbiddenError("Solo el propietario del negocio puede ejecutar la clasificación asistida por IA.");
   }
 }
 
@@ -99,7 +99,7 @@ export function setConversationActionOverrideHandler(
       // deliberately has no dependency on this application layer's error
       // types, so the mapping happens here instead.
       if (error instanceof Error && error.message === "Conversation not found.") {
-        throw new NotFoundError("Conversation");
+        throw new NotFoundError("la conversación");
       }
       throw error;
     }

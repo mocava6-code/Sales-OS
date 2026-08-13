@@ -31,9 +31,9 @@ export function ActionsList({
   return (
     <section className="space-y-4">
       <Card>
-        <h3 className="text-sm font-medium text-neutral-500">Overdue follow-ups</h3>
+        <h3 className="text-sm font-medium text-neutral-500">Seguimientos vencidos</h3>
         {overdueFollowUps.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-400">No overdue follow-ups.</p>
+          <p className="mt-2 text-sm text-neutral-400">No hay seguimientos vencidos.</p>
         ) : (
           <ul className="mt-1 divide-y divide-neutral-100">
             {overdueFollowUps.map((followUp) => (
@@ -51,9 +51,9 @@ export function ActionsList({
       </Card>
 
       <Card>
-        <h3 className="text-sm font-medium text-neutral-500">High-priority opportunities</h3>
+        <h3 className="text-sm font-medium text-neutral-500">Oportunidades de alta prioridad</h3>
         {highPriorityLeads.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-400">No high-priority leads right now.</p>
+          <p className="mt-2 text-sm text-neutral-400">No hay clientes de alta prioridad por ahora.</p>
         ) : (
           <ul className="mt-2 divide-y divide-neutral-100">
             {highPriorityLeads.map((lead) => (

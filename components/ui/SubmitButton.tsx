@@ -16,7 +16,7 @@ export function SubmitButton({
 
   return (
     <Button type="submit" variant={variant} disabled={pending}>
-      {pending ? (pendingText ?? "Saving…") : children}
+      {pending ? (pendingText ?? "Guardando…") : children}
     </Button>
   );
 }

@@ -9,7 +9,7 @@ export default async function ObserverIndexPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-neutral-900">Conversations</h1>
+      <h1 className="text-lg font-semibold text-neutral-900">Conversaciones</h1>
       <ConversationPicker initialResults={initialResults} />
     </div>
   );

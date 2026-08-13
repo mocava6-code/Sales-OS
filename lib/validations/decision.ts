@@ -1,14 +1,14 @@
 import { z } from "zod";
 
-export const decisionRecordIdSchema = z.string().min(1, { error: "A decision id is required." });
-export const conversationIdSchema = z.string().min(1, { error: "A conversation id is required." });
+export const decisionRecordIdSchema = z.string().min(1, { error: "Se requiere un id de decisión." });
+export const conversationIdSchema = z.string().min(1, { error: "Se requiere un id de conversación." });
 
 const optionalNoteSchema = z.string().trim().max(2000).optional();
 const requiredNoteSchema = z
   .string()
   .trim()
-  .min(1, { error: "A short note is required." })
-  .max(2000, { error: "Keep the note under 2000 characters." });
+  .min(1, { error: "Se requiere una nota breve." })
+  .max(2000, { error: "La nota no puede superar los 2000 caracteres." });
 
 export const advisorActionTypeSchema = z.enum([
   "FOLLOWED_RECOMMENDATION",

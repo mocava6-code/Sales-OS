@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/", label: "Today" },
-  { href: "/leads", label: "Leads" },
-  { href: "/knowledge", label: "Knowledge" },
-  { href: "/settings", label: "Settings" },
+  { href: "/", label: "Hoy" },
+  { href: "/leads", label: "Clientes" },
+  { href: "/knowledge", label: "Conocimiento" },
+  { href: "/settings", label: "Configuración" },
 ];
 
 export function BottomNav() {

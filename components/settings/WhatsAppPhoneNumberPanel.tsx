@@ -37,9 +37,10 @@ export function WhatsAppPhoneNumberPanel() {
 
   return (
     <Card className="space-y-3">
-      <p className="font-medium text-neutral-900">Register a WhatsApp number</p>
+      <p className="font-medium text-neutral-900">Registrar un número de WhatsApp</p>
       <p className="text-sm text-neutral-500">
-        Copy these exactly from Meta&apos;s WhatsApp Manager — inbound messages only create Leads for numbers registered here.
+        Cópialos exactamente desde el WhatsApp Manager de Meta — los mensajes entrantes solo crean clientes para los números
+        registrados aquí.
       </p>
 
       <TextField
@@ -50,28 +51,28 @@ export function WhatsAppPhoneNumberPanel() {
         inputMode="numeric"
       />
       <TextField
-        label="Display phone number"
+        label="Número de teléfono a mostrar"
         id="displayPhoneNumber"
         value={form.displayPhoneNumber}
         onChange={(e) => setForm({ ...form, displayPhoneNumber: e.target.value })}
         placeholder="+51 999 999 999"
       />
       <TextField
-        label="WhatsApp Business Account id (waba_id)"
+        label="Id de la cuenta de WhatsApp Business (waba_id)"
         id="wabaId"
         value={form.wabaId}
         onChange={(e) => setForm({ ...form, wabaId: e.target.value })}
         inputMode="numeric"
       />
       <TextField
-        label="Label (optional)"
+        label="Etiqueta (opcional)"
         id="label"
         value={form.label}
         onChange={(e) => setForm({ ...form, label: e.target.value })}
       />
 
       <Button type="button" disabled={isPending} onClick={handleRegister}>
-        {isPending ? "Registering…" : "Register number"}
+        {isPending ? "Registrando…" : "Registrar número"}
       </Button>
 
       {error && (

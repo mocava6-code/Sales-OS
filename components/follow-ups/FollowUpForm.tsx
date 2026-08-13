@@ -15,14 +15,14 @@ export function FollowUpForm({ leadId }: { leadId: string }) {
     <form action={action} className="space-y-4">
       <input type="hidden" name="leadId" value={leadId} />
       <TextField
-        label="Due date"
+        label="Fecha de vencimiento"
         id="dueAt"
         type="date"
         required
         error={state?.errors?.dueAt?.[0]}
       />
-      <TextAreaField label="Note (optional)" id="note" placeholder="What's the follow-up about?" />
-      <SubmitButton pendingText="Saving…">Save follow-up</SubmitButton>
+      <TextAreaField label="Nota (opcional)" id="note" placeholder="¿De qué se trata el seguimiento?" />
+      <SubmitButton pendingText="Guardando…">Guardar seguimiento</SubmitButton>
       {state?.formError && <p className="text-sm text-red-600">{state.formError}</p>}
     </form>
   );

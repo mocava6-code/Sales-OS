@@ -11,7 +11,7 @@ export const askKoriQuestionSchema = z.object({
   question: z
     .string()
     .trim()
-    .min(1, { error: "A question is required." })
-    .max(MAX_QUESTION_LENGTH, { error: `Keep the question under ${MAX_QUESTION_LENGTH} characters.` }),
+    .min(1, { error: "Se requiere una pregunta." })
+    .max(MAX_QUESTION_LENGTH, { error: `La pregunta no puede superar los ${MAX_QUESTION_LENGTH} caracteres.` }),
   timezone: z.string().trim().min(1).optional(),
 });

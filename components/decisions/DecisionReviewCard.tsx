@@ -1,34 +1,7 @@
 import { Card } from "@/components/ui/Card";
 import type { DecisionSummaryDTO } from "@/server/application/dto";
-
-const STATUS_LABELS: Record<DecisionSummaryDTO["status"], string> = {
-  PROPOSED: "Proposed",
-  APPROVED: "Approved",
-  REJECTED: "Rejected",
-  EXECUTED: "Executed",
-  CANCELLED: "Cancelled",
-  OVERRIDDEN: "Overridden",
-};
-
-const RISK_LABELS: Record<DecisionSummaryDTO["riskLevel"], string> = {
-  LOW: "Low risk",
-  MEDIUM: "Medium risk",
-  HIGH: "High risk",
-  CRITICAL: "Critical risk",
-};
-
-const IMPACT_LABELS: Record<DecisionSummaryDTO["impactLevel"], string> = {
-  LOW: "Low impact",
-  MEDIUM: "Medium impact",
-  HIGH: "High impact",
-};
-
-const APPROVAL_LABELS: Record<DecisionSummaryDTO["approvalRequirement"], string> = {
-  AUTO_ALLOWED: "Auto-allowed",
-  ADVISOR_APPROVAL_REQUIRED: "Needs advisor approval",
-  ADMIN_APPROVAL_REQUIRED: "Needs admin approval",
-  HUMAN_INFORMATION_REQUIRED: "Needs more information",
-};
+import { formatDateTime } from "@/lib/copy/format";
+import { DECISION_APPROVAL_LABELS, DECISION_IMPACT_LABELS, DECISION_RISK_LABELS, DECISION_STATUS_LABELS } from "@/lib/copy/labels";
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
@@ -44,31 +17,31 @@ export function DecisionReviewCard({ decision }: { decision: DecisionSummaryDTO 
       <header className="space-y-1">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-semibold text-neutral-900">{decision.title}</h1>
-          <Badge>{STATUS_LABELS[decision.status]}</Badge>
+          <Badge>{DECISION_STATUS_LABELS[decision.status]}</Badge>
         </div>
         <p className="text-sm text-neutral-500">{decision.objective}</p>
       </header>
 
       <section>
-        <h2 className="text-sm font-medium text-neutral-500">Recommendation</h2>
+        <h2 className="text-sm font-medium text-neutral-500">Recomendación</h2>
         <p className="mt-1 text-neutral-900">{decision.recommendation}</p>
       </section>
 
       <section>
-        <h2 className="text-sm font-medium text-neutral-500">Reasoning</h2>
+        <h2 className="text-sm font-medium text-neutral-500">Razonamiento</h2>
         <p className="mt-1 text-neutral-800">{decision.reasoning}</p>
       </section>
 
       <section className="flex flex-wrap gap-2">
-        <Badge>Confidence {Math.round(decision.confidence * 100)}%</Badge>
-        <Badge>{RISK_LABELS[decision.riskLevel]}</Badge>
-        <Badge>{IMPACT_LABELS[decision.impactLevel]}</Badge>
-        <Badge>{APPROVAL_LABELS[decision.approvalRequirement]}</Badge>
+        <Badge>Confianza {Math.round(decision.confidence * 100)}%</Badge>
+        <Badge>{DECISION_RISK_LABELS[decision.riskLevel]}</Badge>
+        <Badge>{DECISION_IMPACT_LABELS[decision.impactLevel]}</Badge>
+        <Badge>{DECISION_APPROVAL_LABELS[decision.approvalRequirement]}</Badge>
       </section>
 
       {decision.evidence.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-neutral-500">Evidence</h2>
+          <h2 className="text-sm font-medium text-neutral-500">Evidencia</h2>
           <ul className="mt-1 space-y-1">
             {decision.evidence.map((item, index) => (
               <li key={index} className="text-sm text-neutral-700">
@@ -81,7 +54,7 @@ export function DecisionReviewCard({ decision }: { decision: DecisionSummaryDTO 
 
       {decision.missingInformation.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-neutral-500">Missing information</h2>
+          <h2 className="text-sm font-medium text-neutral-500">Información faltante</h2>
           <ul className="mt-1 space-y-1">
             {decision.missingInformation.map((item, index) => (
               <li key={index} className="text-sm text-amber-700">
@@ -95,13 +68,13 @@ export function DecisionReviewCard({ decision }: { decision: DecisionSummaryDTO 
 
       {decision.alternatives.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-neutral-500">Alternatives</h2>
+          <h2 className="text-sm font-medium text-neutral-500">Alternativas</h2>
           <ul className="mt-1 space-y-2">
             {decision.alternatives.map((alt, index) => (
               <li key={index} className="text-sm">
                 <p className="font-medium text-neutral-800">{alt.title}</p>
                 <p className="text-neutral-600">{alt.recommendation}</p>
-                {alt.tradeoff && <p className="text-neutral-400">Tradeoff: {alt.tradeoff}</p>}
+                {alt.tradeoff && <p className="text-neutral-400">Compromiso: {alt.tradeoff}</p>}
               </li>
             ))}
           </ul>
@@ -109,18 +82,18 @@ export function DecisionReviewCard({ decision }: { decision: DecisionSummaryDTO 
       )}
 
       <details className="rounded-xl border border-neutral-100 p-3 text-sm text-neutral-500">
-        <summary className="cursor-pointer font-medium text-neutral-600">Technical details</summary>
+        <summary className="cursor-pointer font-medium text-neutral-600">Detalles técnicos</summary>
         <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-          <dt className="text-neutral-400">Model</dt>
+          <dt className="text-neutral-400">Modelo</dt>
           <dd>{decision.metadata.modelName}</dd>
-          <dt className="text-neutral-400">Provider</dt>
+          <dt className="text-neutral-400">Proveedor</dt>
           <dd>{decision.metadata.aiProvider}</dd>
-          <dt className="text-neutral-400">Prompt version</dt>
+          <dt className="text-neutral-400">Versión del prompt</dt>
           <dd>{decision.metadata.promptVersion}</dd>
-          <dt className="text-neutral-400">Engine schema</dt>
+          <dt className="text-neutral-400">Esquema del motor</dt>
           <dd>v{decision.metadata.engineSchemaVersion}</dd>
-          <dt className="text-neutral-400">Decided at</dt>
-          <dd>{new Date(decision.metadata.decidedAt).toLocaleString()}</dd>
+          <dt className="text-neutral-400">Decidido el</dt>
+          <dd>{formatDateTime(new Date(decision.metadata.decidedAt))}</dd>
         </dl>
       </details>
     </Card>
