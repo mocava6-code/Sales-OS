@@ -6,11 +6,13 @@
 // input schema has no businessId field, so there is nothing for a caller
 // to smuggle in.
 
-import { runResponseActionAIBatchSchema } from "@/lib/validations/response-action";
+import { CONVERSATION_ACTION_OVERRIDE_LABELS, runResponseActionAIBatchSchema, setConversationActionOverrideSchema } from "@/lib/validations/response-action";
 import { runResponseActionAIBatch, type ResponseActionAIBatchResult } from "@/server/services/response-action-ai-batch-service";
+import { setHumanConversationActionState, type SetHumanConversationActionStateReasonCode } from "@/server/services/conversation-action-state-service";
+import type { ActionState } from "@/server/intelligence/response-action/types";
 import { type AuthContextResolver, type AuthenticatedUser, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
 import { tryGetAIProvider } from "./composition-root";
-import { ForbiddenError, InvalidInputError, type ApplicationResult, toApplicationResult } from "./errors";
+import { ForbiddenError, InvalidInputError, NotFoundError, type ApplicationResult, toApplicationResult } from "./errors";
 
 /**
  * AI-assisted response-action classification touches every conversation in
@@ -53,5 +55,55 @@ export function runResponseActionAIBatchHandler(
       persist: parsed.data.persist,
       aiProvider: tryGetAIProvider(),
     });
+  });
+}
+
+// Phase 7 — human override. The one place a label an advisor recognizes
+// ("Requiere respuesta" / "Necesita seguimiento" / "Esperando al cliente" /
+// "No requiere acción") maps onto the domain layer's (actionState,
+// reasonCode) pair, so the two can never be submitted mismatched. No
+// OWNER gate — any authenticated advisor working a conversation may mark
+// its state; setHumanConversationActionState itself enforces the tenant
+// boundary (a conversationId outside the caller's businessId resolves to
+// "not found", never leaks or silently succeeds cross-tenant).
+const OVERRIDE_LABEL_TO_STATE: Record<(typeof CONVERSATION_ACTION_OVERRIDE_LABELS)[number], { actionState: ActionState; reasonCode: SetHumanConversationActionStateReasonCode }> = {
+  REQUIERE_RESPUESTA: { actionState: "REPLY_REQUIRED", reasonCode: "MARKED_REPLY_REQUIRED" },
+  NECESITA_SEGUIMIENTO: { actionState: "FOLLOW_UP_REQUIRED", reasonCode: "MARKED_FOLLOW_UP_REQUIRED" },
+  ESPERANDO_CLIENTE: { actionState: "WAITING_ON_CUSTOMER", reasonCode: "MARKED_ALREADY_ANSWERED" },
+  NO_REQUIERE_ACCION: { actionState: "NO_ACTION_REQUIRED", reasonCode: "MARKED_NO_ACTION_REQUIRED" },
+};
+
+export interface SetConversationActionOverrideActionDependencies {
+  resolver?: AuthContextResolver;
+}
+
+export function setConversationActionOverrideHandler(
+  rawInput: unknown,
+  dependencies: SetConversationActionOverrideActionDependencies = {},
+): Promise<ApplicationResult<{ conversationId: string; actionState: ActionState }>> {
+  return toApplicationResult(async () => {
+    const user = await requireAuthenticatedUser(dependencies.resolver ?? defaultAuthContextResolver);
+
+    const parsed = setConversationActionOverrideSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      throw new InvalidInputError(parsed.error.flatten().fieldErrors);
+    }
+
+    const mapping = OVERRIDE_LABEL_TO_STATE[parsed.data.label];
+    try {
+      await setHumanConversationActionState(user.businessId, parsed.data.conversationId, mapping.actionState, mapping.reasonCode, user.id);
+    } catch (error) {
+      // setHumanConversationActionState throws a plain Error for "not
+      // found or not this tenant's conversation" (server/services/
+      // conversation-action-state-service.ts) — the service layer
+      // deliberately has no dependency on this application layer's error
+      // types, so the mapping happens here instead.
+      if (error instanceof Error && error.message === "Conversation not found.") {
+        throw new NotFoundError("Conversation");
+      }
+      throw error;
+    }
+
+    return { conversationId: parsed.data.conversationId, actionState: mapping.actionState };
   });
 }

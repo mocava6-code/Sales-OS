@@ -307,7 +307,7 @@ export async function projectConversationActionState(
   });
 }
 
-export type SetHumanConversationActionStateReasonCode = "MARKED_NO_ACTION_REQUIRED" | "MARKED_FOLLOW_UP_REQUIRED" | "MARKED_ALREADY_ANSWERED";
+export type SetHumanConversationActionStateReasonCode = "MARKED_NO_ACTION_REQUIRED" | "MARKED_FOLLOW_UP_REQUIRED" | "MARKED_ALREADY_ANSWERED" | "MARKED_REPLY_REQUIRED";
 
 /**
  * "No requiere respuesta" / "Necesita seguimiento" / "Ya respondido" — the
