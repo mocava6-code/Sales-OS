@@ -204,11 +204,74 @@ function isUniqueConstraintViolation(error: unknown): boolean {
 // worst-case exposure rather than trying to parse every possible shape.
 const MAX_SANITIZED_ERROR_MESSAGE_LENGTH = 300;
 
-function sanitizeErrorForLogging(error: unknown): { code: string; message: string } {
+// Every typed engine/orchestration/Kori error in this codebase wraps its
+// real cause via a `.cause` constructor param (ConversationAnalysisFailedError,
+// ModelProviderError, KoriNaturalLanguageParseError, ...) rather than
+// re-typing it — see server/orchestration/errors.ts's file header comment.
+// sanitizeErrorForLogging used to read only the OUTERMOST wrapper, which is
+// always the same static template message (e.g. "Conversation Intelligence
+// analysis failed for conversation ...") — that's why every production log
+// line for this failure looked identical regardless of what actually broke.
+// Walking the chain (bounded, so a pathological circular/deep cause can
+// never make logging itself misbehave) surfaces the real failure without
+// changing what triggers a log line or how the pipeline behaves.
+const MAX_CAUSE_CHAIN_DEPTH = 3;
+// Zod issues describe field PATHS and TYPES ("expected string, got number
+// at facts.vehicleYear.value") — never the actual field VALUES — so they
+// carry no conversation content/PII by construction. Still length-capped
+// defensively, same discipline as every other field here.
+const MAX_ISSUES_JSON_LENGTH = 500;
+
+interface SanitizedErrorInfo {
+  code: string;
+  message: string;
+}
+
+function sanitizeSingleError(error: unknown): SanitizedErrorInfo {
   if (error instanceof Error) {
     return { code: error.name, message: error.message.slice(0, MAX_SANITIZED_ERROR_MESSAGE_LENGTH) };
   }
   return { code: "UnknownError", message: String(error).slice(0, MAX_SANITIZED_ERROR_MESSAGE_LENGTH) };
+}
+
+/** `.issues` is only ever a Zod issue list, on ProviderResultSchemaError/EngineInternalError/InputValidationError — see server/intelligence/errors.ts. */
+function sanitizeIssues(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("issues" in error)) return undefined;
+  const issues = (error as { issues?: unknown }).issues;
+  if (issues === undefined) return undefined;
+  try {
+    return JSON.stringify(issues).slice(0, MAX_ISSUES_JSON_LENGTH);
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeErrorForLogging(error: unknown): {
+  code: string;
+  message: string;
+  /** The `.cause` chain, sanitized the same way as the top-level error, immediate cause first. Absent when the error carries no `.cause`. */
+  causes?: SanitizedErrorInfo[];
+  /** First Zod issue list found on the top-level error or anywhere in its cause chain. */
+  issues?: string;
+} {
+  const top = sanitizeSingleError(error);
+
+  const causes: SanitizedErrorInfo[] = [];
+  let issues = sanitizeIssues(error);
+  let current: unknown = error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
+  let depth = 0;
+  while (current !== undefined && current !== null && depth < MAX_CAUSE_CHAIN_DEPTH) {
+    causes.push(sanitizeSingleError(current));
+    issues ??= sanitizeIssues(current);
+    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
+    depth += 1;
+  }
+
+  return {
+    ...top,
+    causes: causes.length > 0 ? causes : undefined,
+    issues,
+  };
 }
 
 /**
@@ -217,8 +280,10 @@ function sanitizeErrorForLogging(error: unknown): { code: string; message: strin
  * throw past handleInboundMessage, so this is the only place either
  * failure becomes observable. Deliberately excludes message content,
  * tokens/API keys, full phone numbers, and raw ConversationSnapshot JSON —
- * only identifiers (safe to log elsewhere in this codebase already) and a
- * length-capped error code/message.
+ * only identifiers (safe to log elsewhere in this codebase already), a
+ * length-capped error code/message, and (new) the same for up to 3 levels
+ * of `.cause` plus any Zod `.issues` found along the way — still never the
+ * conversation content or field values themselves, only shape/type info.
  */
 function logPipelineStepFailure(
   stage: "analysis" | "commercial_profile_projection" | "contact_name_upgrade",
@@ -227,7 +292,7 @@ function logPipelineStepFailure(
   // a conversation is resolved (step 3b, ahead of step 4).
   context: { businessId: string; leadId: string; conversationId?: string },
 ): void {
-  const { code, message } = sanitizeErrorForLogging(error);
+  const { code, message, causes, issues } = sanitizeErrorForLogging(error);
   console.error("[whatsapp gateway] pipeline step failed", {
     businessId: context.businessId,
     leadId: context.leadId,
@@ -235,6 +300,8 @@ function logPipelineStepFailure(
     stage,
     errorCode: code,
     errorMessage: message,
+    ...(causes ? { causes } : {}),
+    ...(issues ? { issues } : {}),
   });
 }
 

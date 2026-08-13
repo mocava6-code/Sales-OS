@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { ModelProviderError, ProviderResultSchemaError } from "@/server/intelligence/errors";
+import { KoriNaturalLanguageParseError } from "@/server/kori/errors";
+import { ConversationAnalysisFailedError } from "@/server/orchestration/errors";
 import { UnknownPhoneNumberError } from "../errors";
 import { createWhatsAppGateway, type WhatsAppGatewayDependencies, type WhatsAppPhoneNumberRecord } from "../gateway";
 import type { NormalizedWhatsAppBusinessAppMessage, NormalizedWhatsAppMessage, NormalizedWhatsAppStatus } from "../types";
@@ -437,7 +440,132 @@ describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Anal
       errorCode: "Error",
       errorMessage: "AI_PROVIDER is not configured. Set it in your environment (see .env.example).",
     });
+    // A plain Error with no `.cause` must not gain new keys — the
+    // diagnostic-logging enrichment is purely additive.
+    expect(call?.[1]).not.toHaveProperty("causes");
+    expect(call?.[1]).not.toHaveProperty("issues");
     consoleErrorSpy.mockRestore();
+  });
+
+  describe("diagnostic cause-chain logging (Step 1 — root-cause investigation, no behavior change)", () => {
+    async function triggerAnalysisFailure(error: unknown) {
+      const failingRunAnalysis = vi.fn(async () => {
+        throw error;
+      });
+      const { deps } = createFakeGatewayDeps({
+        phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+        runAnalysisImpl: failingRunAnalysis,
+      });
+      const gateway = createWhatsAppGateway(deps);
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const result = await gateway.handleInboundMessage(textMessage());
+      const call = consoleErrorSpy.mock.calls.find((c) => c[1]?.stage === "analysis");
+      consoleErrorSpy.mockRestore();
+      return { result, logged: call?.[1] as Record<string, unknown> | undefined };
+    }
+
+    it("captures the immediate .cause of a wrapped error (ConversationAnalysisFailedError -> ModelProviderError) — the exact real production shape", async () => {
+      const modelProviderError = new ModelProviderError('AI provider "groq" failed to complete the request.', undefined);
+      const wrapped = new ConversationAnalysisFailedError('Conversation Intelligence analysis failed for conversation "conv-1".', modelProviderError);
+
+      const { logged } = await triggerAnalysisFailure(wrapped);
+
+      expect(logged).toMatchObject({
+        errorCode: "ConversationAnalysisFailedError",
+        errorMessage: 'Conversation Intelligence analysis failed for conversation "conv-1".',
+        causes: [{ code: "ModelProviderError", message: 'AI provider "groq" failed to complete the request.' }],
+      });
+    });
+
+    it("walks a multi-level cause chain (ModelProviderError -> KoriNaturalLanguageParseError -> raw Groq error body) so the real Groq HTTP failure is visible, not just the generic wrapper", async () => {
+      // Matches the real shape exactly: groq-client.ts's KoriNaturalLanguageParseError
+      // carries the sanitized-but-untrusted Groq response body text as ITS
+      // OWN .cause (a plain string, not an Error) — see its own doc comment
+      // on why that body is safe to surface (never a secret, only describes
+      // what's wrong with the request/schema).
+      const groqCause = new KoriNaturalLanguageParseError("Groq request failed with status 400.", "sanitized response body");
+      const modelProviderError = new ModelProviderError('AI provider "groq" failed to complete the request.', groqCause);
+      const wrapped = new ConversationAnalysisFailedError('Conversation Intelligence analysis failed for conversation "conv-1".', modelProviderError);
+
+      const { logged } = await triggerAnalysisFailure(wrapped);
+
+      expect(logged?.causes).toEqual([
+        { code: "ModelProviderError", message: 'AI provider "groq" failed to complete the request.' },
+        { code: "KoriNaturalLanguageParseError", message: "Groq request failed with status 400." },
+        { code: "UnknownError", message: "sanitized response body" },
+      ]);
+    });
+
+    it("captures Zod-shaped .issues (field paths/types) from a ProviderResultSchemaError without needing field values", async () => {
+      const issues = [{ code: "invalid_type", expected: "string", received: "number", path: ["facts", "vehicleYear", "value"], message: "Expected string, received number" }];
+      const schemaError = new ProviderResultSchemaError('AI provider "groq" returned output that does not match the expected schema.', issues);
+      const wrapped = new ConversationAnalysisFailedError('Conversation Intelligence analysis failed for conversation "conv-1".', schemaError);
+
+      const { logged } = await triggerAnalysisFailure(wrapped);
+
+      expect(logged?.causes).toEqual([{ code: "ProviderResultSchemaError", message: 'AI provider "groq" returned output that does not match the expected schema.' }]);
+      expect(logged?.issues).toBeDefined();
+      const parsedIssues = JSON.parse(logged!.issues as string);
+      expect(parsedIssues).toEqual(issues);
+    });
+
+    it("bounds the cause chain at 3 levels — never hangs or grows unbounded on a deep chain", async () => {
+      const level4 = new Error("level-4");
+      const level3 = new Error("level-3", { cause: level4 });
+      const level2 = new Error("level-2", { cause: level3 });
+      const level1 = new Error("level-1", { cause: level2 });
+      const top = new Error("top", { cause: level1 });
+
+      const { logged } = await triggerAnalysisFailure(top);
+
+      expect(logged?.causes).toHaveLength(3);
+      expect((logged?.causes as Array<{ message: string }>).map((c) => c.message)).toEqual(["level-1", "level-2", "level-3"]);
+    });
+
+    it("truncates an oversized cause message the same way the top-level message is truncated", async () => {
+      const hugeMessage = "x".repeat(1000);
+      const wrapped = new Error("top", { cause: new Error(hugeMessage) });
+
+      const { logged } = await triggerAnalysisFailure(wrapped);
+
+      expect((logged?.causes as Array<{ message: string }>)[0].message.length).toBe(300);
+    });
+
+    it("never leaks conversation content, tokens, or PII through the cause chain — the inbound message's own content never reaches the log even though causes/issues are now included", async () => {
+      const groqCause = new KoriNaturalLanguageParseError("Groq request failed with status 400.", "sanitized response body");
+      const modelProviderError = new ModelProviderError('AI provider "groq" failed to complete the request.', groqCause);
+      const wrapped = new ConversationAnalysisFailedError('Conversation Intelligence analysis failed for conversation "conv-1".', modelProviderError);
+      const failingRunAnalysis = vi.fn(async () => {
+        throw wrapped;
+      });
+      const { deps } = createFakeGatewayDeps({
+        phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+        runAnalysisImpl: failingRunAnalysis,
+      });
+      const gateway = createWhatsAppGateway(deps);
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await gateway.handleInboundMessage(textMessage({ content: "secret customer content: card 4111-1111-1111-1111, my address is 123 Main St" }));
+
+      const call = consoleErrorSpy.mock.calls.find((c) => c[1]?.stage === "analysis");
+      const logged = JSON.stringify(call);
+      consoleErrorSpy.mockRestore();
+
+      // The real inbound message text (this handler's only actual source of
+      // customer content/PII) never flows into the error chain at all —
+      // none of it can appear in the log regardless of what the cause chain contains.
+      expect(logged).not.toContain("secret customer content");
+      expect(logged).not.toContain("4111-1111-1111-1111");
+      expect(logged).not.toContain("123 Main St");
+    });
+
+    it("omits causes/issues entirely for a cause-free error — the enrichment never adds noise to the common case", async () => {
+      const { logged } = await triggerAnalysisFailure(new Error("AI provider unavailable"));
+
+      expect(logged).not.toHaveProperty("causes");
+      expect(logged).not.toHaveProperty("issues");
+    });
   });
 });
 
