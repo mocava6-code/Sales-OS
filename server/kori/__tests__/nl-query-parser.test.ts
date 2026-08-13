@@ -399,7 +399,7 @@ describe("parseNaturalLanguageToKoriQuery — json_schema structured-output mode
       expect(call.systemPrompt).toContain(`"${field}":null`);
     }
     expect(call.systemPrompt).toContain('"vehicleBrand":"Toyota"');
-    expect(call.systemPrompt).toContain('"needsReply":true');
+    expect(call.systemPrompt).toContain('"actionState":"REPLY_REQUIRED"');
   });
 
   it("regression: resolves case=1's real production output — a sparse filters object missing 13 of 15 declared keys — even though the improved prompt asks the model not to produce this shape", async () => {
