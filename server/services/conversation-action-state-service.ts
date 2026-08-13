@@ -2,9 +2,11 @@ import { prisma } from "@/server/db/client";
 import type { PrismaClient } from "@/server/db/generated/client";
 import type { PrismaClientOrTransaction } from "@/server/persistence/prisma/client";
 import type { AIProvider } from "@/server/intelligence/ai-provider";
+import { ModelProviderError } from "@/server/intelligence/errors";
 import { classifyDeterministically } from "@/server/intelligence/response-action/deterministic-classifier";
 import { classifyConversationActionWithAI } from "@/server/intelligence/response-action/ai-classifier";
 import type { ActionClassificationResult, ActionState, ActionStateSource, ConversationActionContext } from "@/server/intelligence/response-action/types";
+import { KoriProviderRateLimitedError } from "@/server/kori/errors";
 
 // --- Conversation selection (cross-conversation contamination fix) ----------
 //
@@ -163,13 +165,34 @@ export async function fetchConversationForActionContext(businessId: string, conv
 export interface ClassifyConversationActionDependencies {
   /** Omit to skip the AI layer entirely — deterministic-inconclusive cases resolve to UNCERTAIN instead of calling out. */
   aiProvider?: AIProvider;
+  /**
+   * Default false (every existing caller — the webhook pipeline, the live
+   * query path — keeps its exact current behavior: an AI failure of ANY
+   * kind, including rate limiting, becomes UNCERTAIN, never a thrown
+   * error). Set true only for a caller that itself needs to distinguish
+   * "genuinely inconclusive" from "Groq is rate-limiting us right now" —
+   * a batch job (server/services/response-action-ai-batch-service.ts)
+   * that must STOP calling Groq on 429 rather than silently keep
+   * degrading every remaining item to UNCERTAIN while burning through
+   * the same rate limit. Every other AI failure (malformed output, schema
+   * mismatch, network error) still becomes UNCERTAIN either way.
+   */
+  rethrowRateLimitErrors?: boolean;
+}
+
+export function isRateLimitedError(error: unknown): boolean {
+  if (error instanceof KoriProviderRateLimitedError) return true;
+  if (error instanceof ModelProviderError && error.cause instanceof KoriProviderRateLimitedError) return true;
+  return false;
 }
 
 /**
  * Deterministic first; AI only when deterministic is inconclusive AND an
  * aiProvider was supplied. Never lets an AI failure/timeout/unavailability
  * propagate as anything other than UNCERTAIN — the safety principle this
- * whole system is built around.
+ * whole system is built around — UNLESS rethrowRateLimitErrors opts a
+ * caller out of that specifically for rate-limit errors (see its own doc
+ * comment).
  */
 export async function classifyConversationAction(context: ConversationActionContext, deps: ClassifyConversationActionDependencies = {}): Promise<ActionClassificationResult> {
   const deterministic = classifyDeterministically(context);
@@ -184,6 +207,9 @@ export async function classifyConversationAction(context: ConversationActionCont
   try {
     return await classifyConversationActionWithAI(context, { aiProvider: deps.aiProvider });
   } catch (error) {
+    if (deps.rethrowRateLimitErrors && isRateLimitedError(error)) {
+      throw error;
+    }
     return uncertainFallback(`Deterministic rules were inconclusive and AI classification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

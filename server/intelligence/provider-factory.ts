@@ -2,6 +2,8 @@ import type { AIRouter } from "./ai-router";
 import { createAIRouter } from "./ai-router";
 import { createProviderRegistry } from "./provider-registry";
 import { createAnthropicAIProvider } from "./providers/anthropic-ai-provider";
+import { createGroqAIProvider } from "./providers/groq-ai-provider";
+import { createGroqClient } from "../kori/groq-client";
 
 const DEFAULT_MAX_TOKENS = 2048;
 
@@ -38,8 +40,21 @@ export function createAIRouterFromEnv(): AIRouter {
       registry.register(createAnthropicAIProvider({ apiKey, model, maxTokens: DEFAULT_MAX_TOKENS }));
       break;
     }
+    case "groq": {
+      // Reuses the SAME GROQ_API_KEY already configured in production for
+      // Kori's NL parser — no new secret. AI_MODEL (not KORI_GROQ_MODEL)
+      // is the model var here, for consistency with every other provider
+      // case in this switch.
+      const apiKey = process.env.GROQ_API_KEY;
+      if (!apiKey) {
+        throw new Error('GROQ_API_KEY is not configured. Required when AI_PROVIDER="groq".');
+      }
+      const groqClient = createGroqClient({ apiKey, model, maxTokens: DEFAULT_MAX_TOKENS });
+      registry.register(createGroqAIProvider({ groqClient }));
+      break;
+    }
     default:
-      throw new Error(`AI_PROVIDER="${selectedProvider}" is not implemented yet. Supported providers: anthropic.`);
+      throw new Error(`AI_PROVIDER="${selectedProvider}" is not implemented yet. Supported providers: anthropic, groq.`);
   }
 
   return createAIRouter(registry, { selectedProvider });

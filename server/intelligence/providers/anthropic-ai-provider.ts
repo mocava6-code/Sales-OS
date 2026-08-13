@@ -7,6 +7,7 @@ import type {
   ModelCompletionRequest,
   ModelCompletionResponse,
 } from "../capabilities";
+import { extractJsonCandidate } from "./json-extraction";
 
 // Anthropic-specific code lives ONLY in this file. No other module in
 // server/intelligence imports "@anthropic-ai/sdk" or any Anthropic type —
@@ -61,32 +62,6 @@ function createRealSendMessage(config: AnthropicAIProviderConfig): SendMessage {
     const textBlock = response.content.find((block) => block.type === "text");
     return textBlock && textBlock.type === "text" ? textBlock.text : "";
   };
-}
-
-const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/i;
-
-/**
- * Superficial, deterministic cleanup only — strips a markdown code fence or
- * takes the outermost {...} span when there's surrounding prose. Never
- * "repairs" semantically invalid or truncated JSON: if no clean JSON span
- * can be found, the text is returned as-is and the pipeline's own schema
- * validation (not this adapter) is what correctly rejects it.
- */
-function extractJsonCandidate(rawText: string): string {
-  const trimmed = rawText.trim();
-
-  const fenced = CODE_FENCE.exec(trimmed);
-  if (fenced) {
-    return fenced[1].trim();
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  return trimmed;
 }
 
 // ConversationAnalysisCapability, DecisionReasoningCapability, and
