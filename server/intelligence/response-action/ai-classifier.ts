@@ -42,7 +42,7 @@ function isExplicitDecline(context: ConversationActionContext): boolean {
 }
 
 // Same defense-in-depth reasoning, a second real finding from the same
-// Phase 5 evaluation: given a bare "[unsupported message type: reaction]"
+// Phase 5 evaluation: given a bare "[tipo de mensaje no compatible: reaction]"
 // placeholder (server/whatsapp/message-normalizer.ts — the exact string
 // stored when a WhatsApp entry has no real text, e.g. an emoji reaction to
 // an earlier message, with no caption), the model confidently (0.9)
@@ -53,8 +53,8 @@ function isExplicitDecline(context: ConversationActionContext): boolean {
 // are exact, fixed strings (only used when message-normalizer.ts had no
 // caption to fall back to), so an exact match is safe — a message that DID
 // have a caption would never produce one of these strings at all.
-const NO_TEXT_CONTENT_PLACEHOLDERS = ["[image]", "[document]", "[audio]", "[video]", "[sticker]"] as const;
-const UNSUPPORTED_MESSAGE_TYPE_PATTERN = /^\[unsupported message type: .+\]$/;
+const NO_TEXT_CONTENT_PLACEHOLDERS = ["[imagen]", "[documento]", "[audio]", "[video]", "[sticker]"] as const;
+const UNSUPPORTED_MESSAGE_TYPE_PATTERN = /^\[tipo de mensaje no compatible: .+\]$/;
 
 function isNoTextContentPlaceholder(content: string): boolean {
   const trimmed = content.trim();

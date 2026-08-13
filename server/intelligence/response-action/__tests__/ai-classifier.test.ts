@@ -169,11 +169,11 @@ describe("classifyConversationActionWithAI — explicit decline safety override 
 
 describe("classifyConversationActionWithAI — no-readable-text safety override (Phase 5 production finding)", () => {
   // Confirmed against a REAL Groq production call during Phase 5
-  // evaluation: given a bare "[unsupported message type: reaction]"
+  // evaluation: given a bare "[tipo de mensaje no compatible: reaction]"
   // placeholder (no real text — see message-normalizer.ts), the model
   // returned NO_ACTION_REQUIRED / CONVERSATION_NOT_COMMERCIAL at 0.9
   // confidence. There's no actual customer text to ground that claim in.
-  it.each(["[image]", "[document]", "[audio]", "[video]", "[sticker]", "[unsupported message type: reaction]", "[unsupported message type: unsupported]"])(
+  it.each(["[imagen]", "[documento]", "[audio]", "[video]", "[sticker]", "[tipo de mensaje no compatible: reaction]", "[tipo de mensaje no compatible: unsupported]"])(
     'overrides a confident NO_ACTION_REQUIRED to UNCERTAIN for content-less message "%s"',
     async (content) => {
       const mediaContext = context({ recentEntries: [{ id: "entry-1", direction: "INBOUND", content, occurredAt: new Date("2026-08-01T00:00:00Z") }] });

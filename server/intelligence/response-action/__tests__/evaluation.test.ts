@@ -98,7 +98,7 @@ const CASES: LabeledCase[] = [
   { id: "real-fragment-del77", gold: "REPLY_REQUIRED", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "Del 77" })]) },
   { id: "real-fragment-provincia", gold: "REPLY_REQUIRED", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "Provincia" })]) },
   { id: "real-no-entiendo", gold: "REPLY_REQUIRED", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "No entiendo" })]) },
-  { id: "real-unsupported-media", gold: "WAITING_ON_CUSTOMER", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "[unsupported message type: reaction]" })]) },
+  { id: "real-unsupported-media", gold: "WAITING_ON_CUSTOMER", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "[tipo de mensaje no compatible: reaction]" })]) },
   // Off-topic / non-commercial content (the reparented "prueba" thread's later personal chat) — must NOT be confidently resolved either way by the deterministic layer.
   { id: "real-offtopic-1", gold: "NO_ACTION_REQUIRED", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "Que te llevo" })]) },
   { id: "real-offtopic-2", gold: "NO_ACTION_REQUIRED", acceptableInconclusive: true, context: ctx([entry({ id: "e1", direction: "INBOUND", content: "Ya pues maria" })]) },

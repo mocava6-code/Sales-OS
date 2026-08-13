@@ -81,7 +81,7 @@ export function normalizeInboundMessage(
       return {
         ...base,
         messageType: "IMAGE",
-        content: message.image.caption ?? "[image]",
+        content: message.image.caption ?? "[imagen]",
         media: {
           mediaId: message.image.id,
           mimeType: message.image.mime_type,
@@ -95,7 +95,7 @@ export function normalizeInboundMessage(
       return {
         ...base,
         messageType: "DOCUMENT",
-        content: message.document.caption ?? message.document.filename ?? "[document]",
+        content: message.document.caption ?? message.document.filename ?? "[documento]",
         media: {
           mediaId: message.document.id,
           mimeType: message.document.mime_type,
@@ -148,7 +148,7 @@ export function normalizeInboundMessage(
       return {
         ...base,
         messageType: "CONTACT",
-        content: contacts.map((c) => c.formattedName).join(", ") || "[contact]",
+        content: contacts.map((c) => c.formattedName).join(", ") || "[contacto]",
         contacts,
       };
     }
@@ -158,7 +158,7 @@ export function normalizeInboundMessage(
       return {
         ...base,
         messageType: "LOCATION",
-        content: message.location.name ?? message.location.address ?? "[location]",
+        content: message.location.name ?? message.location.address ?? "[ubicación]",
         location: {
           latitude: message.location.latitude,
           longitude: message.location.longitude,
@@ -170,7 +170,7 @@ export function normalizeInboundMessage(
 
     default: {
       const unknownType: NormalizedWhatsAppMessageType = "UNKNOWN";
-      return { ...base, messageType: unknownType, content: `[unsupported message type: ${raw.type}]` };
+      return { ...base, messageType: unknownType, content: `[tipo de mensaje no compatible: ${raw.type}]` };
     }
   }
 }
@@ -195,11 +195,11 @@ function extractEchoContent(raw: WhatsAppRawMessageEcho): { messageType: Normali
     }
     case "image": {
       const image = raw.image as { caption?: string } | undefined;
-      return { messageType: "IMAGE", content: image?.caption ?? "[image]" };
+      return { messageType: "IMAGE", content: image?.caption ?? "[imagen]" };
     }
     case "document": {
       const document = raw.document as { caption?: string; filename?: string } | undefined;
-      return { messageType: "DOCUMENT", content: document?.caption ?? document?.filename ?? "[document]" };
+      return { messageType: "DOCUMENT", content: document?.caption ?? document?.filename ?? "[documento]" };
     }
     case "audio":
       return { messageType: "AUDIO", content: "[audio]" };
@@ -210,7 +210,7 @@ function extractEchoContent(raw: WhatsAppRawMessageEcho): { messageType: Normali
     case "sticker":
       return { messageType: "STICKER", content: "[sticker]" };
     default:
-      return { messageType: "UNKNOWN", content: `[unsupported message type: ${raw.type}]` };
+      return { messageType: "UNKNOWN", content: `[tipo de mensaje no compatible: ${raw.type}]` };
   }
 }
 
