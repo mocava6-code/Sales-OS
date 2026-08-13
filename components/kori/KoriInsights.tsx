@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import type { InsightCardType, KoriInsightsSummary } from "@/server/services/kori-insights-service";
 
@@ -12,7 +13,7 @@ function pct(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
-export function KoriInsights({ insights }: { insights: KoriInsightsSummary }) {
+export function KoriInsights({ insights, canImportHistory }: { insights: KoriInsightsSummary; canImportHistory: boolean }) {
   return (
     <section className="space-y-2">
       <h2 className="px-0.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">Aprendizajes de Kori</h2>
@@ -51,6 +52,18 @@ export function KoriInsights({ insights }: { insights: KoriInsightsSummary }) {
           </div>
         )}
       </Card>
+
+      {insights.showHistoricalImportNudge && canImportHistory && (
+        <Link href="/settings/whatsapp/import" className="block">
+          <Card className="flex items-center justify-between gap-3 bg-indigo-50">
+            <p className="text-sm leading-snug text-indigo-900">
+              <span className="font-semibold">📥 Kori solo ve tus conversaciones desde que conectaste WhatsApp.</span> Importa tu historial anterior para
+              darle más contexto.
+            </p>
+            <span className="shrink-0 text-sm font-medium text-indigo-700">Importar →</span>
+          </Card>
+        </Link>
+      )}
     </section>
   );
 }

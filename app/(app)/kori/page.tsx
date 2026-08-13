@@ -42,7 +42,7 @@ export default async function KoriPage() {
         commercialConversationsThisMonth={conversionSummary.commercialConversations}
       />
 
-      <KoriInsights insights={insights} />
+      <KoriInsights insights={insights} canImportHistory={user.role === "OWNER"} />
 
       <KoriStatStrip stats={briefing.stats} />
 

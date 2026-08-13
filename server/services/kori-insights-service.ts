@@ -11,6 +11,7 @@
 // comment). It's available for a future OWNER-gated surface, not part of
 // this page's default composition.
 
+import { prisma } from "@/server/db/client";
 import { getProductPerformance, type ProductPerformance, type ProductPerformanceSummary } from "@/server/insights/product-performance";
 import { getLossAnalysis, type LossAnalysis } from "@/server/insights/loss-analysis";
 import { getDataQualityStats, type DataQualityField, type DataQualityStat } from "@/server/insights/data-quality";
@@ -42,6 +43,15 @@ export interface KoriInsightsSummary {
   cards: InsightCard[];
   productPerformance: ProductPerformance[];
   periodDays: number;
+  /**
+   * Data Sources Audit — the historical WhatsApp import feature
+   * (server/services/historical-import-service.ts, already shipped,
+   * already has a settings UI) has never been used by any business in
+   * production despite being fully built. True whenever this business has
+   * imported zero historical conversations — self-resolving: the moment
+   * they import even one, this naturally goes false.
+   */
+  showHistoricalImportNudge: boolean;
 }
 
 /** Groups leads with no recorded outcome by product and flags the largest cluster — "N clientes preguntaron por X pero no recibieron seguimiento." */
@@ -128,10 +138,11 @@ export interface GetKoriInsightsContext {
 }
 
 export async function getKoriInsights(businessId: string, now: Date, context: GetKoriInsightsContext): Promise<KoriInsightsSummary> {
-  const [productPerformance, lossAnalysis, dataQualityStats] = await Promise.all([
+  const [productPerformance, lossAnalysis, dataQualityStats, importedConversationsCount] = await Promise.all([
     getProductPerformance(businessId, now),
     getLossAnalysis(businessId, now),
     getDataQualityStats(businessId),
+    prisma.importedConversation.count({ where: { businessId } }),
   ]);
 
   return {
@@ -139,5 +150,6 @@ export async function getKoriInsights(businessId: string, now: Date, context: Ge
     cards: deriveInsightCards(productPerformance, lossAnalysis, context.needsOutcomeNudges, dataQualityStats),
     productPerformance: productPerformance.products.slice(0, MAX_PRODUCTS_DISPLAYED),
     periodDays: productPerformance.periodDays,
+    showHistoricalImportNudge: importedConversationsCount === 0,
   };
 }
