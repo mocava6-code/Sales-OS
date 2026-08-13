@@ -17,6 +17,7 @@ import {
   rejectCandidateSchema,
   startWebsiteSyncSchema,
 } from "@/lib/validations/knowledge";
+import { fetchKnownBusinessNames } from "@/server/application/known-business-names";
 import { prisma } from "@/server/db/client";
 import type { PrismaClient } from "@/server/db/generated/client";
 import type { AIProvider } from "@/server/intelligence/ai-provider";
@@ -106,8 +107,7 @@ export function analyzeConversationImportHandler(
       }
     }
 
-    const businessUsers = await db.user.findMany({ where: { businessId: user.businessId }, select: { name: true } });
-    const knownBusinessNames = businessUsers.map((u) => u.name);
+    const knownBusinessNames = await fetchKnownBusinessNames(user.businessId, db);
 
     const parsed = parseWhatsAppExport({
       rawText: input.rawText,
