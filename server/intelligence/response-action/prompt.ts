@@ -3,7 +3,7 @@ import { ACTION_REASON_CODES } from "./reason-codes";
 import type { ConversationActionContext } from "./types";
 
 // Bump whenever wording/schema changes in a way that could change model output.
-export const RESPONSE_ACTION_PROMPT_VERSION = "kori-response-action-v1";
+export const RESPONSE_ACTION_PROMPT_VERSION = "kori-response-action-v2";
 
 const SYSTEM_PROMPT = `You are Kori's Semantic Response Intelligence classifier for Koriaki Import, a Peruvian
 seller of automotive body kits and accessories.
@@ -53,6 +53,14 @@ HARD RULES:
 6. recommendedAction is a short, concrete suggestion for the advisor (e.g. "Send the Hilux TRAVO 2022
    kit price") or null when nothing specific applies (e.g. for NO_ACTION_REQUIRED/WAITING_ON_CUSTOMER).
 7. Spanish is the default conversation language; handle English or mixed-language conversations too.
+8. An explicit customer DECLINE or REJECTION ("no quiero", "no me interesa", "no gracias" said as a
+   rejection, "ya no" cancelling something) is NEVER, under any circumstances, NO_ACTION_REQUIRED or
+   WAITING_ON_CUSTOMER — a declined sale may still warrant a save-the-sale reply from the advisor, and
+   treating a decline as "nothing to do" is exactly the kind of confidently-wrong call this system exists
+   to prevent. For an explicit decline, choose REPLY_REQUIRED (reasonCode CUSTOMER_OBJECTION) if a
+   save-the-sale response is plausible, or UNCERTAIN if you're not sure — never NO_ACTION_REQUIRED. Do
+   not confuse a decline with a plain closing acknowledgment ("ok gracias", "perfecto") — those two are
+   opposite in meaning even though both can be short and polite.
 
 Return ONLY this JSON shape:
 {

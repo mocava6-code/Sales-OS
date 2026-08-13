@@ -99,6 +99,74 @@ describe("classifyConversationActionWithAI — confidence threshold", () => {
   });
 });
 
+describe("classifyConversationActionWithAI — explicit decline safety override (Phase 5 production finding)", () => {
+  // Confirmed against a REAL Groq production call during Phase 5
+  // evaluation: given "lo lamento pero no quiero", the model returned
+  // NO_ACTION_REQUIRED at 0.9 confidence — exactly the dangerous call
+  // deterministic-classifier.ts was designed to never make. Prompt
+  // wording alone wasn't a reliable enough guarantee, so this is now also
+  // enforced in code, regardless of what the model returns.
+  const declineContext = context({ recentEntries: [{ id: "entry-1", direction: "INBOUND", content: "lo lamento pero no quiero", occurredAt: new Date("2026-08-01T00:00:00Z") }] });
+
+  it("overrides a confident NO_ACTION_REQUIRED to UNCERTAIN when the message is an explicit decline", async () => {
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "NO_ACTION_REQUIRED", reasonCode: "CUSTOMER_DECLINED", confidence: 0.9, reasoning: "Customer declined.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+    });
+
+    const result = await classifyConversationActionWithAI(declineContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("UNCERTAIN");
+    expect(result.source).toBe("AI");
+  });
+
+  it("overrides a confident WAITING_ON_CUSTOMER to UNCERTAIN when the message is an explicit decline", async () => {
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "WAITING_ON_CUSTOMER", reasonCode: "WAITING_FOR_CUSTOMER_DECISION", confidence: 0.9, reasoning: "Ball is elsewhere.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+    });
+
+    const result = await classifyConversationActionWithAI(declineContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("UNCERTAIN");
+  });
+
+  it("does NOT override REPLY_REQUIRED for the same decline — only NO_ACTION_REQUIRED/WAITING_ON_CUSTOMER are dangerous here", async () => {
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "REPLY_REQUIRED", reasonCode: "CUSTOMER_OBJECTION", confidence: 0.9, reasoning: "Save-the-sale opportunity.", evidenceEntryIds: ["entry-1"], recommendedAction: "Offer an alternative." }),
+    });
+
+    const result = await classifyConversationActionWithAI(declineContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("REPLY_REQUIRED");
+  });
+
+  it("does not trigger the override for an unrelated message with no decline language", async () => {
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "NO_ACTION_REQUIRED", reasonCode: "CUSTOMER_CLOSING_ACKNOWLEDGEMENT", confidence: 0.9, reasoning: "Polite closing.", evidenceEntryIds: ["entry-1"], recommendedAction: null }),
+    });
+
+    const result = await classifyConversationActionWithAI(context(), { aiProvider: mock.provider }); // default context: "¿Tienen disponible en rojo?"
+
+    expect(result.actionState).toBe("NO_ACTION_REQUIRED");
+  });
+
+  it("checks the LAST inbound message, not an earlier one, for decline language", async () => {
+    const laterQuestionContext = context({
+      recentEntries: [
+        { id: "entry-1", direction: "INBOUND", content: "no quiero el kit rojo", occurredAt: new Date("2026-08-01T00:00:00Z") },
+        { id: "entry-2", direction: "OUTBOUND", content: "Entendido, ¿le interesa en negro?", occurredAt: new Date("2026-08-01T00:05:00Z") },
+        { id: "entry-3", direction: "INBOUND", content: "Sí, ese sí me interesa", occurredAt: new Date("2026-08-01T00:10:00Z") },
+      ],
+    });
+    const mock = createMockAIProvider({
+      response: jsonResponse({ actionState: "REPLY_REQUIRED", reasonCode: "BUYING_SIGNAL", confidence: 0.9, reasoning: "Interested in black.", evidenceEntryIds: ["entry-3"], recommendedAction: "Send black kit price." }),
+    });
+
+    const result = await classifyConversationActionWithAI(laterQuestionContext, { aiProvider: mock.provider });
+
+    expect(result.actionState).toBe("REPLY_REQUIRED"); // never touched — the override only inspects the most recent inbound message
+  });
+});
+
 describe("classifyConversationActionWithAI — failure modes throw typed errors", () => {
   it("throws AICapabilityNotSupportedError when the provider has no conversationAnalysis capability", async () => {
     const provider = { name: "no-analysis", modelName: "x", capabilities: {} };

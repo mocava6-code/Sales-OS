@@ -12,9 +12,34 @@
 
 import type { AIProvider } from "../ai-provider";
 import { AICapabilityNotSupportedError, MalformedProviderOutputError, ModelProviderError, ProviderResultSchemaError } from "../errors";
+import { normalizeContent } from "../observation/detectors/keyword-detectors";
 import { buildResponseActionPrompt, RESPONSE_ACTION_PROMPT_VERSION } from "./prompt";
 import { conversationActionClassificationOutputSchema } from "./schema";
 import type { ActionClassificationResult, ConversationActionContext } from "./types";
+
+// Defense in depth for the same principle deterministic-classifier.ts
+// already enforces (an explicit decline must never be auto-resolved to
+// "nothing to do") — confirmed necessary against a real Groq production
+// call during Phase 5 evaluation: the model resolved "lo lamento pero no
+// quiero" to NO_ACTION_REQUIRED at 0.9 confidence despite the prompt's own
+// instructions. Prompt wording alone isn't a reliable enough guarantee for
+// something this dangerous, so it's enforced here in code too, regardless
+// of what the model returns or how confident it claims to be.
+const DECLINE_KEYWORDS = ["no quiero", "no me interesa", "no lo necesito", "no la necesito", "ya no lo necesito", "ya no la necesito"] as const;
+
+function lastInboundContent(context: ConversationActionContext): string | null {
+  for (let i = context.recentEntries.length - 1; i >= 0; i--) {
+    if (context.recentEntries[i].direction === "INBOUND") return context.recentEntries[i].content;
+  }
+  return null;
+}
+
+function isExplicitDecline(context: ConversationActionContext): boolean {
+  const content = lastInboundContent(context);
+  if (!content) return false;
+  const normalized = normalizeContent(content);
+  return DECLINE_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
 
 /**
  * "Use conservative thresholds" — a result below this is never trusted as
@@ -96,6 +121,18 @@ export async function classifyConversationActionWithAI(context: ConversationActi
       reasonCode: "AMBIGUOUS_INTENT",
       confidence: output.confidence,
       reasoning: `AI confidence (${output.confidence}) is below the safety threshold (${AI_CONFIDENCE_THRESHOLD}) — treated as uncertain rather than trusted. Original assessment: ${output.reasoning}`,
+      evidenceEntryIds: output.evidenceEntryIds,
+      recommendedAction: null,
+      source: "AI",
+    };
+  }
+
+  if ((output.actionState === "NO_ACTION_REQUIRED" || output.actionState === "WAITING_ON_CUSTOMER") && isExplicitDecline(context)) {
+    return {
+      actionState: "UNCERTAIN",
+      reasonCode: "UNCERTAIN_CONTEXT",
+      confidence: output.confidence,
+      reasoning: `Safety override: the customer's message contains an explicit decline, which must never resolve to ${output.actionState} — coerced to UNCERTAIN regardless of model confidence. Original AI assessment: ${output.reasoning}`,
       evidenceEntryIds: output.evidenceEntryIds,
       recommendedAction: null,
       source: "AI",
