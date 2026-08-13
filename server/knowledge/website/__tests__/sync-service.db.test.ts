@@ -3,9 +3,41 @@
 // the AI provider both faked (no real network, no real LLM calls).
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PrismaClient } from "@/server/db/generated/client";
 import { createMockAIProvider } from "@/server/intelligence/testing/mock-ai-provider";
 import { cleanupKnowledgeTestFixture, createKnowledgeTestFixture, getTestPrisma, shouldRunDbTests, type KnowledgeTestFixture } from "../../__tests__/test-db";
 import { processNextSyncBatch, startWebsiteSync } from "../sync-service";
+
+/**
+ * Wraps a real PrismaClient so `db.websitePage.upsert` throws while every
+ * other call (including every other websitePage/knowledgeSource method)
+ * still hits the real sales_os_test database — reproduces the exact "write
+ * fails after KnowledgeSource creation" shape of the Sprint 8 acceptance bug
+ * deterministically, without needing to wait out a real 5s Prisma
+ * transaction timeout against a slow connection.
+ */
+function withFailingPageUpsert(db: PrismaClient, message: string): PrismaClient {
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === "websitePage") {
+        const real = target.websitePage;
+        return new Proxy(real, {
+          get(inner, innerProp) {
+            if (innerProp === "upsert") {
+              return async () => {
+                throw new Error(message);
+              };
+            }
+            const value = Reflect.get(inner, innerProp);
+            return typeof value === "function" ? value.bind(inner) : value;
+          },
+        });
+      }
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as PrismaClient;
+}
 
 function fakeResponse(body: string, options: { ok?: boolean; status?: number; contentType?: string } = {}): Response {
   return {
@@ -63,12 +95,12 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body><a href="/tienda">t</a></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body><a href="/tienda">t</a></body></html>`),
       "https://koriakiimport.com/tienda": () => fakeResponse(PRODUCT_PAGE),
     });
 
     const result = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
@@ -88,15 +120,15 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
     });
     const started = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
 
-    const pageFetch = fakeFetch({ "https://koriakiimport.com/": () => fakeResponse(PRODUCT_PAGE) });
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(PRODUCT_PAGE) });
     const mock = createMockAIProvider({ knowledgeExtractionResponse: knowledgeExtractionResult() });
 
     const result = await processNextSyncBatch(started.sourceId, mock.provider, db!, pageFetch);
@@ -109,10 +141,19 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     expect(page.status).toBe("EXTRACTED");
     expect(page.pageContext).toBe("PRODUCT");
     expect(page.contentHash).toBeTruthy();
+    expect(page.semanticAnalysisStatus).toBe("COMPLETED"); // a real LLM pass ran
 
-    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId } });
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0].subject).toBe("Hilux TRAVO");
+    // The PRODUCT page's compatibility sentence fires the new deterministic
+    // rule in addition to the mocked LLM's own candidate — both layers ran.
+    // The deterministic candidate's subject is the page's own H1 ("Kit
+    // TRAVO"), preferred over a dictionary-derived subject (Sprint 8
+    // quality-fix review, item 2); the mocked LLM candidate keeps its own
+    // fixed subject ("Hilux TRAVO").
+    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId }, orderBy: { extractorName: "asc" } });
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.extractorName).sort()).toEqual(["deterministic", "kori"]);
+    const deterministicCandidate = candidates.find((c) => c.extractorName === "deterministic")!;
+    expect(deterministicCandidate.subject).toBe("Kit TRAVO");
 
     const evidence = await db!.knowledgeCandidateEvidence.findFirstOrThrow({ where: { candidateId: candidates[0].id } });
     expect(evidence.chunkContext).toBe("PRODUCT");
@@ -123,31 +164,32 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     expect(source.lastRunSummary).toMatchObject({ extracted: 1, failed: 0 });
   });
 
-  it("skips re-extraction for a page whose content hasn't changed", async () => {
+  it("skips re-extraction for a page whose content hasn't changed across a re-sync of the same reused source", async () => {
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
     });
     const started = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
 
-    const pageFetch = fakeFetch({ "https://koriakiimport.com/": () => fakeResponse(PRODUCT_PAGE) });
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(PRODUCT_PAGE) });
     const mock = createMockAIProvider({ knowledgeExtractionResponse: knowledgeExtractionResult() });
     await processNextSyncBatch(started.sourceId, mock.provider, db!, pageFetch);
 
-    // Re-run the whole sync against the same (unchanged) page.
+    // Re-sync the same root/business — reuses the same source and resets
+    // its existing page(s) back to DISCOVERED, but never touches their
+    // stored contentHash, so re-fetching identical content correctly
+    // produces SKIPPED_UNCHANGED without any manual seeding.
     const secondRun = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
-    // Seed the previous contentHash onto the newly (re-)discovered page row to simulate "we've seen this before, unchanged".
-    const previousPage = await db!.websitePage.findFirstOrThrow({ where: { sourceId: started.sourceId } });
-    await db!.websitePage.updateMany({ where: { sourceId: secondRun.sourceId }, data: { contentHash: previousPage.contentHash } });
+    expect(secondRun.sourceId).toBe(started.sourceId);
 
     const callCountBefore = mock.getKnowledgeExtractionCallCount();
     const result = await processNextSyncBatch(secondRun.sourceId, mock.provider, db!, pageFetch);
@@ -164,15 +206,15 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
     });
     const started = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
 
-    const pageFetch = fakeFetch({ "https://koriakiimport.com/": () => fakeResponse(TESTIMONIAL_PAGE) });
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(TESTIMONIAL_PAGE) });
     // Simulate a misbehaving model trying to generalize the testimonial anyway.
     const mock = createMockAIProvider({
       knowledgeExtractionResponse: JSON.stringify({
@@ -204,17 +246,17 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body><a href="/broken">b</a></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body><a href="/broken">b</a></body></html>`),
       "https://koriakiimport.com/broken": () => fakeResponse(PRODUCT_PAGE),
     });
     const started = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
 
     const pageFetch = fakeFetch({
-      "https://koriakiimport.com/": () => fakeResponse(PRODUCT_PAGE),
+      "https://koriakiimport.com": () => fakeResponse(PRODUCT_PAGE),
       "https://koriakiimport.com/broken": () => fakeResponse("", { ok: false, status: 500 }),
     });
     const mock = createMockAIProvider({ knowledgeExtractionResponse: knowledgeExtractionResult() });
@@ -232,19 +274,185 @@ describe.skipIf(!shouldRunDbTests)("sync-service — real pipeline against sales
     const fetchFn = fakeFetch({
       "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
       "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
-      "https://koriakiimport.com/": () => fakeResponse(`<html><body></body></html>`),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
     });
     const started = await startWebsiteSync(
-      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
       db!,
       fetchFn,
     );
-    const pageFetch = fakeFetch({ "https://koriakiimport.com/": () => fakeResponse(PRODUCT_PAGE) });
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(PRODUCT_PAGE) });
     const mock = createMockAIProvider({ knowledgeExtractionResponse: knowledgeExtractionResult() });
     await processNextSyncBatch(started.sourceId, mock.provider, db!, pageFetch);
 
     const secondCall = await processNextSyncBatch(started.sourceId, mock.provider, db!, pageFetch);
 
     expect(secondCall).toEqual({ processed: 0, extracted: 0, skippedUnchanged: 0, failed: 0, remaining: 0, sourceStatus: "COMPLETED" });
+  });
+
+  // --- Regression coverage for the Sprint 8 acceptance bug -----------------
+
+  it("successful initialization: source ends PROCESSING with progress set and no error", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body><a href="/tienda">t</a></body></html>`),
+      "https://koriakiimport.com/tienda": () => fakeResponse(PRODUCT_PAGE),
+    });
+
+    const result = await startWebsiteSync(
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+      db!,
+      fetchFn,
+    );
+
+    const source = await db!.knowledgeSource.findUniqueOrThrow({ where: { id: result.sourceId } });
+    expect(source.status).toBe("PROCESSING");
+    expect(source.progressTotal).toBe(2);
+    expect(source.progressCompleted).toBe(0);
+    expect(source.errorMessage).toBeNull();
+  });
+
+  it("initialization failure: a write failure after KnowledgeSource creation persists FAILED with the real error, not a permanent PENDING row", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body><a href="/tienda">t</a></body></html>`),
+      "https://koriakiimport.com/tienda": () => fakeResponse(PRODUCT_PAGE),
+    });
+    const failingDb = withFailingPageUpsert(db!, "Simulated DB failure during page upsert");
+
+    await expect(
+      startWebsiteSync(
+        { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+        failingDb,
+        fetchFn,
+      ),
+    ).rejects.toThrow("Simulated DB failure during page upsert");
+
+    // Read back through the real (non-failing) client — exactly one source
+    // row exists, and it's FAILED with the real cause captured, never stuck
+    // at PENDING forever.
+    const sources = await db!.knowledgeSource.findMany({
+      where: { businessId: fixture.businessId, sourceType: "WEBSITE", label: "https://koriakiimport.com" },
+    });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].status).toBe("FAILED");
+    expect(sources[0].errorMessage).toBe("Simulated DB failure during page upsert");
+  });
+
+  it("duplicate Sync Now calls for the same business/root reuse the existing source instead of creating another one", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
+    });
+
+    const first = await startWebsiteSync(
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+      db!,
+      fetchFn,
+    );
+    const second = await startWebsiteSync(
+      // Trailing slash — must normalize to the same source as the first call.
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com/" },
+      db!,
+      fetchFn,
+    );
+
+    expect(second.sourceId).toBe(first.sourceId);
+
+    const sources = await db!.knowledgeSource.findMany({ where: { businessId: fixture.businessId, sourceType: "WEBSITE" } });
+    expect(sources).toHaveLength(1);
+  });
+
+  it("does not reuse a source belonging to a different business, even for the same root URL", async () => {
+    const otherFixture = await createKnowledgeTestFixture(db!, "sync-service-db-other");
+    try {
+      const fetchFn = fakeFetch({
+        "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+        "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+        "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
+      });
+
+      const first = await startWebsiteSync(
+        { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+        db!,
+        fetchFn,
+      );
+      const second = await startWebsiteSync(
+        { businessId: otherFixture.businessId, createdByUserId: otherFixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+        db!,
+        fetchFn,
+      );
+
+      expect(second.sourceId).not.toBe(first.sourceId);
+    } finally {
+      await cleanupKnowledgeTestFixture(db!, otherFixture);
+    }
+  });
+
+  // --- Zero-cost mode (Sprint 8 review) -------------------------------------
+
+  it("zero-AI mode: ingestion completes, deterministic candidates are created, and nothing is ever FAILED for lack of AI", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
+    });
+    const started = await startWebsiteSync(
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+      db!,
+      fetchFn,
+    );
+
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(PRODUCT_PAGE) });
+
+    // No AI provider at all — undefined, not a mock. This is the real
+    // shape of tryGetAIProvider()'s return value when AI_PROVIDER/AI_MODEL/
+    // ANTHROPIC_API_KEY aren't configured.
+    const result = await processNextSyncBatch(started.sourceId, undefined, db!, pageFetch);
+
+    expect(result.sourceStatus).toBe("COMPLETED");
+    expect(result.failed).toBe(0);
+
+    const page = await db!.websitePage.findFirstOrThrow({ where: { sourceId: started.sourceId } });
+    expect(page.status).toBe("EXTRACTED"); // ingestion succeeded
+    expect(page.semanticAnalysisStatus).toBe("PENDING"); // never COMPLETED — no LLM pass ran
+
+    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId } });
+    expect(candidates).toHaveLength(1);
+    // Subject is the page's own H1 ("Kit TRAVO"), not a dictionary
+    // reconstruction — Sprint 8 quality-fix review, item 2.
+    expect(candidates[0]).toMatchObject({ subject: "Kit TRAVO", extractorName: "deterministic" });
+
+    const source = await db!.knowledgeSource.findUniqueOrThrow({ where: { id: started.sourceId } });
+    expect(source.status).toBe("COMPLETED"); // never FAILED for lack of AI
+  });
+
+  it("zero-AI mode: a page with nothing deterministic-worthy still completes as NOT_NEEDED, not PENDING or FAILED", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse("", { ok: false }),
+      "https://koriakiimport.com": () => fakeResponse(`<html><body></body></html>`),
+    });
+    const started = await startWebsiteSync(
+      { businessId: fixture.businessId, createdByUserId: fixture.ownerUserId, rootUrl: "https://koriakiimport.com" },
+      db!,
+      fetchFn,
+    );
+
+    const marketingOnlyPage = `<html><head><title>Nosotros</title></head><body><main><h1>Nosotros</h1><p>¡Somos los líderes del mercado en accesorios para camionetas en todo el Perú!</p></main></body></html>`;
+    const pageFetch = fakeFetch({ "https://koriakiimport.com": () => fakeResponse(marketingOnlyPage) });
+
+    const result = await processNextSyncBatch(started.sourceId, undefined, db!, pageFetch);
+
+    expect(result.sourceStatus).toBe("COMPLETED");
+    const page = await db!.websitePage.findFirstOrThrow({ where: { sourceId: started.sourceId } });
+    expect(page.status).toBe("EXTRACTED");
+    expect(page.semanticAnalysisStatus).toBe("NOT_NEEDED");
+
+    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId } });
+    expect(candidates).toHaveLength(0);
   });
 });

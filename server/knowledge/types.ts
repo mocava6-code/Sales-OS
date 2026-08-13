@@ -51,6 +51,24 @@ export interface ExtractionDocumentSection {
   context: ExtractionSectionContext;
   heading: string | null;
   text: string;
+  /**
+   * The best available structural title for THIS section specifically — a
+   * product card's own title/heading, preferred by deterministic rules over
+   * a generic vehicle-dictionary match (Sprint 8 quality-fix review, item 2).
+   * Falls back to `heading` when no more specific card title exists.
+   */
+  subjectHint?: string | null;
+  /**
+   * False for a section that could only be produced via unstructured,
+   * size-bounded fallback splitting (no product card, no clean heading
+   * boundary, no natural paragraph break small enough on its own) — a
+   * deterministic rule must never treat this as a safely groundable single
+   * fact, even if it happens to match a keyword (Sprint 8 quality-fix
+   * review, item 1). LLM extraction is unaffected — it still reads
+   * unreliable sections normally, since a human/AI can judge context an
+   * exact-match rule can't.
+   */
+  reliable: boolean;
 }
 
 /** One crawled page, pre-chunked into sections before extraction. */

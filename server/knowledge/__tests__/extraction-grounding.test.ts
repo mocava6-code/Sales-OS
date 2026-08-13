@@ -19,7 +19,7 @@ function documentInput(text: string, context: "PRODUCT" | "MARKETING" | "TESTIMO
       id: "page-1",
       url: "https://koriakiimport.com/tienda",
       title: "Tienda",
-      sections: [{ id: "s0", context, heading: null, text }],
+      sections: [{ id: "s0", context, heading: null, text, reliable: true }],
       evidenceRefType: "WEBSITE_PAGE",
       evidenceRefId: "page-1",
     },

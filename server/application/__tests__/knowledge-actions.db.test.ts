@@ -50,7 +50,7 @@ describe.skipIf(!shouldRunDbTests)("analyzeConversationImportHandler — real pi
     await cleanupKnowledgeTestFixture(db!, fixture);
   });
 
-  it("parses, persists, extracts, and reinforces end to end, producing the UI summary", async () => {
+  it("parses, persists, extracts, and reinforces end to end (deterministic + LLM both contribute), producing the UI summary", async () => {
     const resolver = createFakeAuthContextResolver({ id: fixture.ownerUserId, businessId: fixture.businessId, role: "OWNER" });
     const mock = createMockAIProvider({ knowledgeExtractionResponse: knowledgeExtractionResult() });
 
@@ -64,11 +64,19 @@ describe.skipIf(!shouldRunDbTests)("analyzeConversationImportHandler — real pi
     expect(result.data.status).toBe("COMPLETED");
     if (result.data.status !== "COMPLETED") throw new Error("unreachable");
 
-    expect(result.data.summary).toEqual({ messagesAnalyzed: 3, candidatesFound: 1, reinforced: 0, conflicts: 0 });
+    // "Test Owner" (the BUSINESS-resolved sender) says a general
+    // compatibility statement, which the new deterministic rule fires on in
+    // addition to the mocked LLM's own (differently-worded) candidate —
+    // both extraction layers ran and both contributed.
+    expect(result.data.summary).toEqual({ messagesAnalyzed: 3, candidatesFound: 2, reinforced: 0, conflicts: 0 });
 
-    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId } });
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({ subject: "Hilux TRAVO", status: "NEW" });
+    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId }, orderBy: { extractorName: "asc" } });
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.extractorName).sort()).toEqual(["deterministic", "kori"]);
+    expect(candidates.every((c) => c.subject === "Hilux TRAVO")).toBe(true);
+
+    const conversation = await db!.importedConversation.findFirstOrThrow({ where: { sourceId: result.data.sourceId } });
+    expect(conversation.semanticAnalysisStatus).toBe("COMPLETED"); // a real LLM pass ran
 
     const source = await db!.knowledgeSource.findUniqueOrThrow({ where: { id: result.data.sourceId } });
     expect(source.status).toBe("COMPLETED");
@@ -139,5 +147,37 @@ describe.skipIf(!shouldRunDbTests)("analyzeConversationImportHandler — real pi
     expect(second.ok).toBe(false);
     if (second.ok) throw new Error("unreachable");
     expect(second.error.code).toBe("INVALID_INPUT");
+  });
+
+  // --- Zero-cost mode (Sprint 8 review) -------------------------------------
+
+  it("zero-AI mode: import completes, deterministic candidates are created, and the source is never FAILED for lack of AI", async () => {
+    const resolver = createFakeAuthContextResolver({ id: fixture.ownerUserId, businessId: fixture.businessId, role: "OWNER" });
+
+    // No AI provider at all — undefined, not a mock. Same shape as
+    // tryGetAIProvider()'s real return value in this environment (no
+    // AI_PROVIDER/AI_MODEL/ANTHROPIC_API_KEY configured).
+    const result = await analyzeConversationImportHandler(
+      { rawText: SAMPLE_EXPORT, externalSource: "PASTED_TEXT", sourceConversationId: "test-paste-zero-ai" },
+      { resolver, aiProvider: undefined, db: db! },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.status).toBe("COMPLETED");
+    if (result.data.status !== "COMPLETED") throw new Error("unreachable");
+
+    expect(result.data.summary).toEqual({ messagesAnalyzed: 3, candidatesFound: 1, reinforced: 0, conflicts: 0 });
+
+    const candidates = await db!.knowledgeCandidate.findMany({ where: { businessId: fixture.businessId } });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ subject: "Hilux TRAVO", extractorName: "deterministic" });
+
+    const conversation = await db!.importedConversation.findFirstOrThrow({ where: { sourceId: result.data.sourceId } });
+    expect(conversation.semanticAnalysisStatus).toBe("PENDING"); // never COMPLETED — no LLM pass ran
+
+    const source = await db!.knowledgeSource.findUniqueOrThrow({ where: { id: result.data.sourceId } });
+    expect(source.status).toBe("COMPLETED"); // never FAILED for lack of AI
+    expect(source.errorMessage).toBeNull();
   });
 });

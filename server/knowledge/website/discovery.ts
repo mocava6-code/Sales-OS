@@ -1,11 +1,19 @@
-// Bounded, same-domain page discovery — sitemap.xml first, BFS crawl as a
-// fallback (Sprint 8 Phase 4). `fetchFn` is injectable so tests never make a
-// real network call, same DI convention used throughout this codebase
-// (e.g. server/whatsapp/gateway.ts's overridable dependencies).
+// Bounded, same-domain page discovery — sitemap seed + root/BFS discovery +
+// canonical dedup (Sprint 8 quality-fix review, item 3). Earlier versions of
+// this function returned as soon as a sitemap was found, never running BFS
+// at all — meaning any page not listed in the sitemap (an about/services/
+// contact page linked only from site navigation, say) could never be
+// discovered as long as a sitemap existed. Both sources always run now; the
+// result is their canonical-deduped union, still bounded by the same
+// maxPages/maxDepth limits and robots rules as before. `fetchFn` is
+// injectable so tests never make a real network call, same DI convention
+// used throughout this codebase (e.g. server/whatsapp/gateway.ts's
+// overridable dependencies).
 
 import * as cheerio from "cheerio";
 import { extractPageContent } from "./page-extraction";
 import { isPathAllowed, parseRobotsTxt, type RobotsRules } from "./robots";
+import { canonicalizeUrl } from "./url-utils";
 
 const DEFAULT_MAX_PAGES = 200;
 const DEFAULT_MAX_DEPTH = 4;
@@ -16,9 +24,11 @@ export interface DiscoveryDependencies {
   maxDepth?: number;
 }
 
+export type DiscoveryMethod = "SITEMAP" | "CRAWL" | "SITEMAP_AND_CRAWL";
+
 export interface DiscoveryResult {
   urls: string[];
-  method: "SITEMAP" | "CRAWL";
+  method: DiscoveryMethod;
 }
 
 async function fetchRobotsRules(origin: string, fetchFn: typeof fetch): Promise<RobotsRules> {
@@ -118,11 +128,21 @@ export async function discoverPages(rootUrl: string, dependencies: DiscoveryDepe
 
   const robots = await fetchRobotsRules(origin, fetchFn);
 
-  const sitemapUrls = await discoverFromSitemap(origin, fetchFn, robots, maxPages);
-  if (sitemapUrls) {
-    return { urls: sitemapUrls, method: "SITEMAP" };
+  // Both sources always run — a sitemap existing is no longer a reason to
+  // skip following the site's own links (and vice versa).
+  const [sitemapUrls, crawledUrls] = await Promise.all([
+    discoverFromSitemap(origin, fetchFn, robots, maxPages),
+    discoverByCrawling(rootUrl, origin, fetchFn, robots, maxPages, maxDepth),
+  ]);
+
+  const merged = new Map<string, string>(); // canonical -> first-seen original form
+  for (const url of [...(sitemapUrls ?? []), ...crawledUrls]) {
+    const canonical = canonicalizeUrl(url);
+    if (!merged.has(canonical)) merged.set(canonical, url);
   }
 
-  const crawledUrls = await discoverByCrawling(rootUrl, origin, fetchFn, robots, maxPages, maxDepth);
-  return { urls: crawledUrls, method: "CRAWL" };
+  const urls = [...merged.values()].slice(0, maxPages);
+  const method: DiscoveryMethod = sitemapUrls && sitemapUrls.length > 0 ? (crawledUrls.length > 0 ? "SITEMAP_AND_CRAWL" : "SITEMAP") : "CRAWL";
+
+  return { urls, method };
 }

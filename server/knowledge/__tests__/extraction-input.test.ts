@@ -83,8 +83,8 @@ describe("fromConversationEntries", () => {
 describe("fromWebsitePageSections", () => {
   it("assembles the document envelope from pre-chunked sections without altering them", () => {
     const sections = [
-      { id: "s1", context: "PRODUCT" as const, heading: "Kit TRAVO", text: "Compatible con Hilux 2016+" },
-      { id: "s2", context: "TESTIMONIAL" as const, heading: null, text: "Llegó en un día" },
+      { id: "s1", context: "PRODUCT" as const, heading: "Kit TRAVO", text: "Compatible con Hilux 2016+", reliable: true },
+      { id: "s2", context: "TESTIMONIAL" as const, heading: null, text: "Llegó en un día", reliable: true },
     ];
 
     const result = fromWebsitePageSections({ id: "page-1", url: "https://koriakiimport.com/tienda", title: "Tienda" }, sections);

@@ -133,3 +133,48 @@ describe("discoverPages — BFS crawl fallback", () => {
     expect(result.urls).toContain("https://koriakiimport.com/tienda");
   });
 });
+
+describe("discoverPages — sitemap seed + BFS discovery + canonical dedup (Sprint 8 quality-fix review, item 3)", () => {
+  it("still discovers a page reachable only via a link, even though a sitemap exists — the exact gap the fix closes", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("User-agent: *\n"),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse(SITEMAP_XML), // lists only "/" and "/tienda"
+      "https://koriakiimport.com/": () =>
+        fakeResponse(`<html><body><main><a href="/tienda">Tienda</a><a href="/nosotros">Nosotros</a></main></body></html>`),
+      "https://koriakiimport.com/nosotros": () => fakeResponse(`<html><body><main><p>Sobre nosotros</p></main></body></html>`),
+      "https://koriakiimport.com/tienda": () => fakeResponse(`<html><body><main><p>Kit TRAVO</p></main></body></html>`),
+    });
+
+    const result = await discoverPages("https://koriakiimport.com/", { fetchFn });
+
+    expect(result.method).toBe("SITEMAP_AND_CRAWL");
+    expect(result.urls).toContain("https://koriakiimport.com/nosotros"); // never in the sitemap, only linked
+    expect(result.urls).toContain("https://koriakiimport.com/tienda");
+  });
+
+  it("canonically dedupes a URL discovered by both the sitemap and BFS into one entry", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("User-agent: *\n"),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse(SITEMAP_XML), // includes "https://koriakiimport.com/tienda"
+      "https://koriakiimport.com/": () => fakeResponse(`<html><body><main><a href="/tienda/">Tienda</a></main></body></html>`), // trailing-slash variant of the same page
+      "https://koriakiimport.com/tienda/": () => fakeResponse(`<html><body><main><p>Kit TRAVO</p></main></body></html>`),
+    });
+
+    const result = await discoverPages("https://koriakiimport.com/", { fetchFn });
+
+    const tiendaMatches = result.urls.filter((url) => url.replace(/\/$/, "") === "https://koriakiimport.com/tienda");
+    expect(tiendaMatches).toHaveLength(1);
+  });
+
+  it("reports method SITEMAP_AND_CRAWL even when BFS's results fully overlap the sitemap's — BFS genuinely ran, not skipped", async () => {
+    const fetchFn = fakeFetch({
+      "https://koriakiimport.com/robots.txt": () => fakeResponse("User-agent: *\n"),
+      "https://koriakiimport.com/sitemap.xml": () => fakeResponse(SITEMAP_XML),
+      "https://koriakiimport.com/": () => fakeResponse(`<html><body><main><a href="/tienda">Tienda</a></main></body></html>`),
+      "https://koriakiimport.com/tienda": () => fakeResponse(`<html><body><main><p>Kit TRAVO</p></main></body></html>`),
+    });
+
+    const result = await discoverPages("https://koriakiimport.com/", { fetchFn });
+    expect(result.method).toBe("SITEMAP_AND_CRAWL");
+  });
+});

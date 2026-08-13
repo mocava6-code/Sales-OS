@@ -21,6 +21,7 @@ import { fetchKnownBusinessNames } from "@/server/application/known-business-nam
 import { prisma } from "@/server/db/client";
 import type { PrismaClient } from "@/server/db/generated/client";
 import type { AIProvider } from "@/server/intelligence/ai-provider";
+import { DETERMINISTIC_EXTRACTOR_NAME, DETERMINISTIC_EXTRACTOR_VERSION, extractDeterministicCandidates } from "@/server/knowledge/deterministic/deterministic-extract";
 import { extractKnowledgeCandidates } from "@/server/knowledge/extract";
 import { fromImportedMessages } from "@/server/knowledge/extraction-input";
 import {
@@ -35,8 +36,19 @@ import { reinforceCandidate } from "@/server/knowledge/reinforcement";
 import { processNextSyncBatch, startWebsiteSync, type ProcessSyncBatchResult, type StartWebsiteSyncResult } from "@/server/knowledge/website/sync-service";
 import type { z } from "zod";
 import { type AuthContextResolver, type AuthenticatedUser, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
-import { getAIProvider } from "./composition-root";
+import { tryGetAIProvider } from "./composition-root";
 import { type ApplicationResult, ForbiddenError, InvalidInputError, NotFoundError, toApplicationResult } from "./errors";
+
+/**
+ * Distinguishes "dependencies.aiProvider wasn't supplied — resolve from the
+ * environment" from "explicitly forcing zero-AI mode" (dependencies =
+ * { aiProvider: undefined }), so tests can pin the zero-AI path
+ * deterministically regardless of what's actually configured in this
+ * environment (Sprint 8 zero-cost mode review, item 3).
+ */
+function resolveAIProvider(dependencies: { aiProvider?: AIProvider }): AIProvider | undefined {
+  return "aiProvider" in dependencies ? dependencies.aiProvider : tryGetAIProvider();
+}
 
 function parseOrThrow<Schema extends z.ZodTypeAny>(schema: Schema, rawInput: unknown): z.infer<Schema> {
   const parsed = schema.safeParse(rawInput);
@@ -143,47 +155,86 @@ export function analyzeConversationImportHandler(
       throw error;
     });
 
-    const aiProvider = dependencies.aiProvider ?? getAIProvider();
-    const extractionInput = { kind: "CONVERSATION" as const, messages: fromImportedMessages(conversation.messages) };
+    // Everything from here on must never leave the source stuck at
+    // PROCESSING — any unexpected failure marks it FAILED with the real
+    // cause (Sprint 8 zero-cost mode review: this is the exact "stuck in
+    // PROCESSING forever" shape the earlier hard-AI-dependency audit found,
+    // now closed by wrapping the whole extraction phase, not just the LLM call).
+    try {
+      const aiProvider = resolveAIProvider(dependencies);
+      const extractionInput = { kind: "CONVERSATION" as const, messages: fromImportedMessages(conversation.messages) };
 
-    const extraction = await extractKnowledgeCandidates(extractionInput, { aiProvider }).catch(async (error) => {
+      // Always runs, AI or not.
+      const deterministic = extractDeterministicCandidates(extractionInput);
+      let newCount = 0;
+      let reinforcedCount = 0;
+      let conflictCount = 0;
+      for (const candidate of deterministic.candidates) {
+        const result = await reinforceCandidate(
+          {
+            businessId: user.businessId,
+            originSourceId: source.id,
+            extractorName: DETERMINISTIC_EXTRACTOR_NAME,
+            extractorVersion: DETERMINISTIC_EXTRACTOR_VERSION,
+            extracted: candidate,
+          },
+          aiProvider,
+          db,
+        );
+        if (result.status === "CONFLICT") conflictCount += 1;
+        else if (result.outcome === "MERGED") reinforcedCount += 1;
+        else newCount += 1;
+      }
+
+      let semanticAnalysisStatus: "NOT_NEEDED" | "PENDING" | "COMPLETED" = deterministic.semanticAnalysisStatus;
+
+      if (aiProvider) {
+        try {
+          const extraction = await extractKnowledgeCandidates(extractionInput, { aiProvider });
+          for (const candidate of extraction.candidates) {
+            const result = await reinforceCandidate(
+              {
+                businessId: user.businessId,
+                originSourceId: source.id,
+                extractorName: "kori",
+                extractorVersion: extraction.extractorVersion,
+                extracted: candidate,
+              },
+              aiProvider,
+              db,
+            );
+            if (result.status === "CONFLICT") conflictCount += 1;
+            else if (result.outcome === "MERGED") reinforcedCount += 1;
+            else newCount += 1;
+          }
+          semanticAnalysisStatus = "COMPLETED";
+        } catch (llmError) {
+          // Not an import failure — the conversation already persisted
+          // successfully above. Leave semanticAnalysisStatus at the
+          // deterministic assessment so a later retry still picks it up.
+          console.error(`[knowledge] LLM extraction failed for ImportedConversation ${conversation.id}, import unaffected:`, llmError);
+        }
+      }
+
+      await db.importedConversation.update({ where: { id: conversation.id }, data: { semanticAnalysisStatus } });
+
+      const summary: AnalyzeConversationImportSummary = {
+        messagesAnalyzed: conversation.messages.length,
+        candidatesFound: newCount,
+        reinforced: reinforcedCount,
+        conflicts: conflictCount,
+      };
+
+      await db.knowledgeSource.update({
+        where: { id: source.id },
+        data: { status: "COMPLETED", lastRunSummary: summary as unknown as object },
+      });
+
+      return { status: "COMPLETED", sourceId: source.id, summary };
+    } catch (error) {
       await markImportSourceFailed(source.id, error instanceof Error ? error.message : "Knowledge extraction failed.", db);
       throw error;
-    });
-
-    let newCount = 0;
-    let reinforcedCount = 0;
-    let conflictCount = 0;
-    for (const candidate of extraction.candidates) {
-      const result = await reinforceCandidate(
-        {
-          businessId: user.businessId,
-          originSourceId: source.id,
-          extractorName: "kori",
-          extractorVersion: extraction.extractorVersion,
-          extracted: candidate,
-        },
-        aiProvider,
-        db,
-      );
-      if (result.status === "CONFLICT") conflictCount += 1;
-      else if (result.outcome === "MERGED") reinforcedCount += 1;
-      else newCount += 1;
     }
-
-    const summary: AnalyzeConversationImportSummary = {
-      messagesAnalyzed: conversation.messages.length,
-      candidatesFound: newCount,
-      reinforced: reinforcedCount,
-      conflicts: conflictCount,
-    };
-
-    await db.knowledgeSource.update({
-      where: { id: source.id },
-      data: { status: "COMPLETED", lastRunSummary: summary as unknown as object },
-    });
-
-    return { status: "COMPLETED", sourceId: source.id, summary };
   });
 }
 
@@ -247,7 +298,7 @@ export function processSyncBatchHandler(
       throw new NotFoundError("la fuente de conocimiento");
     }
 
-    const aiProvider = dependencies.aiProvider ?? getAIProvider();
+    const aiProvider = resolveAIProvider(dependencies);
     return processNextSyncBatch(input.sourceId, aiProvider, db, dependencies.fetchFn);
   });
 }

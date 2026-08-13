@@ -78,7 +78,7 @@ async function buildShortlist(
 async function classifyShortlist(
   shortlist: ShortlistEntry[],
   extracted: ExtractedKnowledgeCandidate,
-  aiProvider: AIProvider,
+  aiProvider: AIProvider | undefined,
 ): Promise<ClassifiedMatch[]> {
   const results: ClassifiedMatch[] = [];
 
@@ -94,6 +94,13 @@ async function classifyShortlist(
       // Same subject, different aspect — not worth recording as a relationship.
       continue;
     }
+
+    // The ambiguous middle ground genuinely needs semantic judgment — with
+    // no AI provider configured, that's simply not available yet (Sprint 8
+    // zero-cost mode). Lexical matching and the two obvious-case checks
+    // above still ran; this pair is just left unclassified rather than
+    // guessed, same as any other classifier failure below.
+    if (!aiProvider) continue;
 
     const llmResult = await classifyRelationship({ newStatement: extracted.statement, existingStatement: entry.statementText }, aiProvider);
     if (!llmResult) continue; // classifier failure — skip this pair, never fabricate a classification
@@ -137,7 +144,7 @@ export interface ReinforceCandidateResult {
  */
 export async function reinforceCandidate(
   input: ReinforceCandidateInput,
-  aiProvider: AIProvider,
+  aiProvider: AIProvider | undefined,
   db: PrismaClient = prisma,
 ): Promise<ReinforceCandidateResult> {
   const shortlist = await buildShortlist(db, input.businessId, input.extracted);
