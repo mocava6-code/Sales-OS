@@ -9,6 +9,7 @@ import {
   type StoredActionStateForResolution,
 } from "@/server/services/conversation-action-state-service";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
+import { UNKNOWN_LABEL } from "@/lib/copy/labels";
 import { parseKoriQuerySpec, type KoriLeadRow, type KoriQueryResult, type KoriQuerySpec } from "./query-spec";
 
 // Kori Natural Language Analytics v0 — the deterministic query executor a
@@ -402,7 +403,7 @@ async function executeGroupLeads(businessId: string, spec: KoriQuerySpec, db: Pr
         ? lead.status
         : groupByField === "assignedAgent"
           ? (lead.assignedToUserId ?? "__UNASSIGNED__")
-          : ((lead.commercialProfile?.[groupByField] as string | null) ?? "Unknown");
+          : ((lead.commercialProfile?.[groupByField] as string | null) ?? UNKNOWN_LABEL);
     counts.set(rawKey, (counts.get(rawKey) ?? 0) + 1);
   }
 
@@ -410,7 +411,7 @@ async function executeGroupLeads(businessId: string, spec: KoriQuerySpec, db: Pr
   if (groupByField === "assignedAgent") {
     const ids = [...counts.keys()].filter((k) => k !== "__UNASSIGNED__");
     const names = await resolveAgentNames(ids, db);
-    groups = [...counts.entries()].map(([key, count]) => ({ key: key === "__UNASSIGNED__" ? "Unassigned" : (names.get(key) ?? key), count }));
+    groups = [...counts.entries()].map(([key, count]) => ({ key: key === "__UNASSIGNED__" ? "Sin asignar" : (names.get(key) ?? key), count }));
   } else {
     groups = [...counts.entries()].map(([key, count]) => ({ key, count }));
   }

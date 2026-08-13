@@ -13,6 +13,7 @@ import { listHighPriorityLeads } from "./lead-service";
 import { listPendingDecisionsPreview, type PendingDecisionPreview } from "./decision-service";
 import { executeKoriQuery } from "@/server/kori/query-executor";
 import { parseKoriQuerySpec } from "@/server/kori/query-spec";
+import { UNKNOWN_LABEL } from "@/lib/copy/labels";
 import type { ActionReasonCode } from "@/server/intelligence/response-action/reason-codes";
 
 const STALE_REPLY_HOURS = 48;
@@ -105,7 +106,14 @@ interface DemandGroup { label: string; count: number }
 async function fetchDemandGroups(businessId: string, groupBy: "vehicleBrand" | "productInterest", createdFrom: string): Promise<DemandGroup[]> {
   const spec = parseKoriQuerySpec({ operation: "GROUP_LEADS", groupBy, filters: { createdFrom } });
   const result = await executeKoriQuery({ businessId, querySpec: spec });
-  return result.type === "grouped_result" ? result.groups.map((g) => ({ label: g.key, count: g.count })) : [];
+  if (result.type !== "grouped_result") return [];
+  // "Sin información" (executeGroupLeads's fallback bucket for leads with no
+  // commercial-profile value) is real data completeness, not a demand
+  // signal — "most clients' interest is 'unknown'" isn't something to
+  // highlight as trending. It's still a legitimate answer if a chat
+  // question asks for the raw grouping (response-formatter.ts), just not
+  // curated into this panel.
+  return result.groups.filter((g) => g.key !== UNKNOWN_LABEL).map((g) => ({ label: g.key, count: g.count }));
 }
 
 export async function getKoriBriefing(businessId: string, now: Date = new Date()): Promise<KoriBriefing> {

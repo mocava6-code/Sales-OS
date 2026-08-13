@@ -382,12 +382,12 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
 
     expect(result.type).toBe("grouped_result");
     if (result.type === "grouped_result") {
-      // "Unknown" is the base fixture's own lead — it has no commercial profile.
+      // "Sin información" is the base fixture's own lead — it has no commercial profile.
       expect(result.groups).toEqual(
         expect.arrayContaining([
           { key: "Toyota", count: 2 },
           { key: "Ford", count: 1 },
-          { key: "Unknown", count: 1 },
+          { key: "Sin información", count: 1 },
         ]),
       );
       expect(result.groups).toHaveLength(3);
@@ -405,12 +405,12 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
 
     expect(result.type).toBe("grouped_result");
     if (result.type === "grouped_result") {
-      // "Unknown" is the base fixture's own lead — it has no commercial profile.
+      // "Sin información" is the base fixture's own lead — it has no commercial profile.
       expect(result.groups).toEqual(
         expect.arrayContaining([
           { key: "TRAVO", count: 3 },
           { key: "kit", count: 1 },
-          { key: "Unknown", count: 1 },
+          { key: "Sin información", count: 1 },
         ]),
       );
       expect(result.groups).toHaveLength(3);
