@@ -13,14 +13,24 @@
 
 import { getProductPerformance, type ProductPerformance, type ProductPerformanceSummary } from "@/server/insights/product-performance";
 import { getLossAnalysis, type LossAnalysis } from "@/server/insights/loss-analysis";
+import { getDataQualityStats, type DataQualityField, type DataQualityStat } from "@/server/insights/data-quality";
 import type { KoriNeedsOutcomeNudge } from "./kori-briefing-service";
 
 const MIN_INTERESTED_FOR_TREND = 3;
 const MIN_TREND_PERCENT_FOR_CARD = 20;
 const MIN_CLUSTER_FOR_OPPORTUNITY_CARD = 2;
 const MAX_INSIGHT_CARDS = 5;
+/** Below this many leads, a missing-data percentage is statistical noise, not a real pattern worth interrupting the owner about. */
+const MIN_LEADS_FOR_DATA_QUALITY_CARD = 5;
+const MIN_MISSING_PERCENT_FOR_DATA_QUALITY_CARD = 40;
 
-export type InsightCardType = "OPORTUNIDAD" | "TENDENCIA" | "PROBLEMA";
+const DATA_QUALITY_FIELD_LABELS: Record<DataQualityField, string> = {
+  customerType: "el tipo de cliente",
+  vehicleBrand: "la marca del vehículo",
+  productInterest: "el producto de interés",
+};
+
+export type InsightCardType = "OPORTUNIDAD" | "TENDENCIA" | "PROBLEMA" | "DATO_FALTANTE";
 
 export interface InsightCard {
   type: InsightCardType;
@@ -64,8 +74,25 @@ export function deriveProblemCard(lossAnalysis: LossAnalysis): InsightCard | nul
   return { type: "PROBLEMA", text: lossAnalysis.responseTimeInsight };
 }
 
-export function deriveInsightCards(productPerformance: ProductPerformanceSummary, lossAnalysis: LossAnalysis, needsOutcomeNudges: KoriNeedsOutcomeNudge[]): InsightCard[] {
-  return [deriveOpportunityCard(needsOutcomeNudges), deriveTrendCard(productPerformance), deriveProblemCard(lossAnalysis)]
+/** Fase D — Data Quality Loop. Names the single most-incomplete field, never fabricates a value, and stays silent below the sample/severity thresholds — a business with clean data never sees this card. */
+export function deriveDataQualityCard(stats: DataQualityStat[]): InsightCard | null {
+  const eligible = stats.filter((s) => s.totalCount >= MIN_LEADS_FOR_DATA_QUALITY_CARD && s.missingPercentage >= MIN_MISSING_PERCENT_FOR_DATA_QUALITY_CARD);
+  if (eligible.length === 0) return null;
+
+  const worst = [...eligible].sort((a, b) => b.missingPercentage - a.missingPercentage)[0];
+  return {
+    type: "DATO_FALTANTE",
+    text: `Kori necesita más información sobre ${DATA_QUALITY_FIELD_LABELS[worst.field]} — ${worst.missingPercentage}% de tus clientes no tienen este dato.`,
+  };
+}
+
+export function deriveInsightCards(
+  productPerformance: ProductPerformanceSummary,
+  lossAnalysis: LossAnalysis,
+  needsOutcomeNudges: KoriNeedsOutcomeNudge[],
+  dataQualityStats: DataQualityStat[],
+): InsightCard[] {
+  return [deriveOpportunityCard(needsOutcomeNudges), deriveTrendCard(productPerformance), deriveProblemCard(lossAnalysis), deriveDataQualityCard(dataQualityStats)]
     .filter((card): card is InsightCard => card !== null)
     .slice(0, MAX_INSIGHT_CARDS);
 }
@@ -101,11 +128,15 @@ export interface GetKoriInsightsContext {
 }
 
 export async function getKoriInsights(businessId: string, now: Date, context: GetKoriInsightsContext): Promise<KoriInsightsSummary> {
-  const [productPerformance, lossAnalysis] = await Promise.all([getProductPerformance(businessId, now), getLossAnalysis(businessId, now)]);
+  const [productPerformance, lossAnalysis, dataQualityStats] = await Promise.all([
+    getProductPerformance(businessId, now),
+    getLossAnalysis(businessId, now),
+    getDataQualityStats(businessId),
+  ]);
 
   return {
     executiveSummary: buildExecutiveSummary(context.commercialConversations, productPerformance, lossAnalysis, context.needsOutcomeNudges.length),
-    cards: deriveInsightCards(productPerformance, lossAnalysis, context.needsOutcomeNudges),
+    cards: deriveInsightCards(productPerformance, lossAnalysis, context.needsOutcomeNudges, dataQualityStats),
     productPerformance: productPerformance.products.slice(0, MAX_PRODUCTS_DISPLAYED),
     periodDays: productPerformance.periodDays,
   };

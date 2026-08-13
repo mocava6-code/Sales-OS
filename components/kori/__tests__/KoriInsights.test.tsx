@@ -22,6 +22,7 @@ describe("KoriInsights", () => {
             { type: "OPORTUNIDAD", text: "15 clientes preguntaron por Ranger Raptor pero no han recibido seguimiento." },
             { type: "TENDENCIA", text: "Las consultas sobre Hilux TRAVO aumentaron 35% en el último mes." },
             { type: "PROBLEMA", text: "Los clientes que esperan más de 24 horas convierten peor." },
+            { type: "DATO_FALTANTE", text: "Kori necesita más información sobre el tipo de cliente — 60% de tus clientes no tienen este dato." },
           ],
         })}
       />,
@@ -30,9 +31,11 @@ describe("KoriInsights", () => {
     expect(screen.getByText(/15 clientes preguntaron por Ranger Raptor/)).toBeInTheDocument();
     expect(screen.getByText(/Hilux TRAVO aumentaron 35%/)).toBeInTheDocument();
     expect(screen.getByText(/esperan más de 24 horas/)).toBeInTheDocument();
+    expect(screen.getByText(/Kori necesita más información/)).toBeInTheDocument();
     expect(screen.getByText("🚨")).toBeInTheDocument();
     expect(screen.getByText("📈")).toBeInTheDocument();
     expect(screen.getByText("⚠️")).toBeInTheDocument();
+    expect(screen.getByText("🔍")).toBeInTheDocument();
     expect(screen.queryByText("OPORTUNIDAD")).not.toBeInTheDocument();
   });
 

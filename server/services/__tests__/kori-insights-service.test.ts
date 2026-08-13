@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildExecutiveSummary, deriveInsightCards, deriveOpportunityCard, deriveProblemCard, deriveTrendCard } from "../kori-insights-service";
+import { buildExecutiveSummary, deriveDataQualityCard, deriveInsightCards, deriveOpportunityCard, deriveProblemCard, deriveTrendCard } from "../kori-insights-service";
 import type { KoriNeedsOutcomeNudge } from "../kori-briefing-service";
 import type { ProductPerformance, ProductPerformanceSummary } from "@/server/insights/product-performance";
 import type { LossAnalysis } from "@/server/insights/loss-analysis";
+import type { DataQualityField, DataQualityStat } from "@/server/insights/data-quality";
 
 function nudge(overrides: Partial<KoriNeedsOutcomeNudge> = {}): KoriNeedsOutcomeNudge {
   return { leadId: "lead-1", leadName: "Cliente", vehicleLine: "Ranger Raptor", reasonCode: "BUYING_SIGNAL", waitingSince: new Date("2026-08-01T00:00:00.000Z"), ...overrides };
@@ -18,6 +19,11 @@ function performanceSummary(products: ProductPerformance[]): ProductPerformanceS
 
 function lossAnalysis(overrides: Partial<LossAnalysis> = {}): LossAnalysis {
   return { totalLost: 0, lostReasonBreakdown: [], responseTimeBuckets: [], responseTimeInsight: null, ...overrides };
+}
+
+function dataQualityStats(overrides: Partial<Record<DataQualityField, Partial<DataQualityStat>>> = {}): DataQualityStat[] {
+  const fields: DataQualityField[] = ["customerType", "vehicleBrand", "productInterest"];
+  return fields.map((field) => ({ field, missingCount: 0, totalCount: 10, missingPercentage: 0, ...overrides[field] }));
 }
 
 describe("deriveOpportunityCard", () => {
@@ -75,18 +81,34 @@ describe("deriveProblemCard", () => {
   });
 });
 
+describe("deriveDataQualityCard", () => {
+  it("names the field with the highest missing percentage above the threshold", () => {
+    const card = deriveDataQualityCard(dataQualityStats({ customerType: { missingCount: 6, missingPercentage: 60 }, vehicleBrand: { missingCount: 5, missingPercentage: 50 } }));
+    expect(card).toEqual({ type: "DATO_FALTANTE", text: "Kori necesita más información sobre el tipo de cliente — 60% de tus clientes no tienen este dato." });
+  });
+
+  it("returns null when no field clears the missing-percentage threshold", () => {
+    expect(deriveDataQualityCard(dataQualityStats({ customerType: { missingCount: 3, missingPercentage: 30 } }))).toBeNull();
+  });
+
+  it("returns null when the business doesn't have enough leads to trust a percentage", () => {
+    expect(deriveDataQualityCard(dataQualityStats({ customerType: { totalCount: 2, missingCount: 2, missingPercentage: 100 } }))).toBeNull();
+  });
+});
+
 describe("deriveInsightCards", () => {
   it("combines every available card type, dropping nulls", () => {
     const cards = deriveInsightCards(
       performanceSummary([product({ product: "Kit menor", interested: 10, trendPercent: 50 })]),
       lossAnalysis({ responseTimeInsight: "Insight de pérdidas." }),
       [nudge(), nudge()],
+      dataQualityStats({ customerType: { missingCount: 6, missingPercentage: 60 } }),
     );
-    expect(cards.map((c) => c.type)).toEqual(["OPORTUNIDAD", "TENDENCIA", "PROBLEMA"]);
+    expect(cards.map((c) => c.type)).toEqual(["OPORTUNIDAD", "TENDENCIA", "PROBLEMA", "DATO_FALTANTE"]);
   });
 
   it("returns an empty array when nothing clears any threshold", () => {
-    expect(deriveInsightCards(performanceSummary([]), lossAnalysis(), [])).toEqual([]);
+    expect(deriveInsightCards(performanceSummary([]), lossAnalysis(), [], dataQualityStats())).toEqual([]);
   });
 });
 

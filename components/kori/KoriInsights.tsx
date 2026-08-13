@@ -5,6 +5,7 @@ const CARD_STYLE: Record<InsightCardType, { icon: string; className: string }> =
   OPORTUNIDAD: { icon: "🚨", className: "bg-emerald-50 text-emerald-900" },
   TENDENCIA: { icon: "📈", className: "bg-indigo-50 text-indigo-900" },
   PROBLEMA: { icon: "⚠️", className: "bg-red-50 text-red-900" },
+  DATO_FALTANTE: { icon: "🔍", className: "bg-neutral-100 text-neutral-700" },
 };
 
 function pct(rate: number): string {
