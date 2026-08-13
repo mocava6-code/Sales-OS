@@ -48,6 +48,22 @@ export function getAIProvider(): AIProvider {
   return cachedAIProvider;
 }
 
+/**
+ * Knowledge-Ingestion-specific: AI is optional there (Sprint 8 zero-cost
+ * mode review), unlike everywhere else in this file. Returns undefined
+ * instead of throwing when AI_PROVIDER/AI_MODEL/ANTHROPIC_API_KEY aren't
+ * configured — getAIProvider() itself is untouched and still hard-required
+ * by the Decision Engine and Conversation Intelligence Engine, which must
+ * keep failing loudly when AI is unavailable, not silently degrade.
+ */
+export function tryGetAIProvider(): AIProvider | undefined {
+  try {
+    return getAIProvider();
+  } catch {
+    return undefined;
+  }
+}
+
 export function getKoriApplicationDependencies(): KoriApplicationDependencies {
   return { aiProvider: getAIProvider(), transactionRunner: getTransactionRunner() };
 }
