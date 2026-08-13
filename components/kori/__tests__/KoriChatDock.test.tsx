@@ -20,6 +20,7 @@ describe("KoriChatDock", () => {
     vi.mocked(askKoriAction).mockResolvedValue({
       ok: true,
       data: {
+        kind: "operational",
         question: "¿Cuántos clientes necesitan respuesta?",
         querySpec: { operation: "COUNT_LEADS", filters: { needsReply: true }, limit: 25 },
         result: { answer: "Hay 14 clientes que necesitan respuesta.", type: "count", count: 14 },
@@ -56,6 +57,7 @@ describe("KoriChatDock", () => {
     vi.mocked(askKoriAction).mockResolvedValue({
       ok: true,
       data: {
+        kind: "operational",
         question: "test",
         querySpec: { operation: "COUNT_LEADS", filters: {}, limit: 25 },
         result: { answer: "Respuesta.", type: "count", count: 1 },

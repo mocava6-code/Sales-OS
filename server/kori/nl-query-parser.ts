@@ -28,6 +28,7 @@ import { ACTION_REASON_CODES } from "../intelligence/response-action/reason-code
 import { InvalidKoriQuerySpecError, KoriNaturalLanguageParseError, UnsupportedKoriQuestionError } from "./errors";
 import { KORI_DATE_TOKENS, KORI_DEFAULT_TIMEZONE, resolveDateTokensInQueryJson } from "./date-interpretation";
 import { createGroqClientFromEnv, type GroqClient } from "./groq-client";
+import { extractJsonCandidate } from "./json-extraction";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
 import { buildKoriGroqTransportJsonSchema, KORI_TRANSPORT_FILTER_FIELDS, transportToKoriQuerySpecJson } from "./groq-transport-schema";
 import { assertKoriQuestionAllowed } from "./preflight-guard";
@@ -59,26 +60,6 @@ function validateQuestion(rawQuestion: unknown): string {
     throw new KoriNaturalLanguageParseError(`question exceeds the maximum length of ${MAX_QUESTION_LENGTH} characters.`);
   }
   return question;
-}
-
-const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/i;
-
-/** Same superficial, deterministic cleanup as the Anthropic adapter's extractJsonCandidate — never repairs malformed JSON, only strips surrounding fence/prose. */
-function extractJsonCandidate(rawText: string): string {
-  const trimmed = rawText.trim();
-
-  const fenced = CODE_FENCE.exec(trimmed);
-  if (fenced) {
-    return fenced[1].trim();
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  return trimmed;
 }
 
 /**
