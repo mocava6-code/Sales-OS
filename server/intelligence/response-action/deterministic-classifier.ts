@@ -63,6 +63,9 @@ const AVAILABILITY_KEYWORDS = ["tienes", "tienen", "hay stock", "disponible", "e
 
 const BUYING_SIGNAL_KEYWORDS = ["lo quiero", "lo llevo", "como hago para comprar", "cómo hago para comprar", "quiero comprarlo", "dame el link de pago", "lo compro"] as const;
 
+/** "mandame tu catalogo" / "envíame tu catálogo" — an imperative catalog request, confirmed against real production traffic; distinct from a general price/availability question. "catalago" is a confirmed real-world typo, not a guess. */
+const CATALOG_REQUEST_KEYWORDS = ["catalogo", "catálogo", "catalago"] as const;
+
 /** Short, exact (post-decoration-stripping) closing phrases — deliberately conservative: under-matching leaves a case as inconclusive (safe); over-matching risks a false negative (unsafe). */
 const CLOSING_PHRASES = [
   "ok",
@@ -109,6 +112,18 @@ const SELF_DEFERRAL_PATTERNS = [
   "mañana te confirmo",
   "manana te confirmo",
   "lo consulto",
+  // Formal/"usted" register of the same commitments above — confirmed
+  // against real production traffic (a wholesale customer writing "le
+  // estoy avisando" / "yo le escribo" / "voy a enviarle" to mean the same
+  // thing a retail customer would phrase as "te aviso" / "te escribo").
+  "le confirmo",
+  "le aviso",
+  "le informo",
+  "le escribo",
+  "le estoy avisando",
+  "te estoy avisando",
+  "voy a enviarle",
+  "cualquier cosa le aviso",
 ] as const;
 
 const ADVISOR_COMMITMENT_PATTERNS = [
@@ -126,6 +141,16 @@ const ADVISOR_COMMITMENT_PATTERNS = [
   "enseguida te",
   "te confirmo",
   "te aviso cuando",
+  // Formal/"usted" register mirrors — same commitment, different register.
+  "le envio",
+  "le envío",
+  "le paso",
+  "le mando",
+  "voy a enviarle",
+  "ahorita le",
+  "enseguida le",
+  "le confirmo",
+  "le aviso cuando",
 ] as const;
 
 /** Emoji-only content (after trimming whitespace) — "👍", "🙏✅", etc. */
@@ -142,11 +167,61 @@ function stripTrailingDecoration(normalized: string): string {
     .trim();
 }
 
+/**
+ * True if a and b differ by at most one character insertion, deletion, or
+ * substitution — a plain two-pointer walk, no DP table needed since we only
+ * ever need to know "<=1 or not."
+ */
+function isWithinEditDistanceOne(a: string, b: string): boolean {
+  if (a === b) return true;
+  const lengthDiff = a.length - b.length;
+  if (lengthDiff < -1 || lengthDiff > 1) return false;
+
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    edits++;
+    if (edits > 1) return false;
+    if (a.length === b.length) {
+      i++;
+      j++;
+    } else if (a.length > b.length) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  edits += a.length - i + (b.length - j);
+  return edits <= 1;
+}
+
+/**
+ * Typo tolerance for closing phrases — confirmed against real production
+ * traffic ("perfcto" for "perfecto"). Restricted to phrases of at least 6
+ * characters: a longer phrase has far fewer real, unrelated words within
+ * edit-distance-1 of it, so this stays safe for the same reason the exact
+ * match is safe — it still requires the ENTIRE message to be a near-exact
+ * match, never a substring/partial one. Short phrases ("ok", "vale",
+ * "listo") are deliberately excluded — too easy to collide with an
+ * unrelated short word (e.g. "sale" is edit-distance-1 from "vale").
+ */
+function isCloseToAnyClosingPhrase(stripped: string): boolean {
+  return (CLOSING_PHRASES as readonly string[]).some((phrase) => phrase.length >= 6 && isWithinEditDistanceOne(stripped, phrase));
+}
+
 function isClosingAcknowledgment(rawContent: string): boolean {
   const normalized = normalizeContent(rawContent).trim();
   if (normalized.length === 0) return false;
   if (EMOJI_ONLY_PATTERN.test(normalized)) return true;
-  return (CLOSING_PHRASES as readonly string[]).includes(stripTrailingDecoration(normalized));
+  const stripped = stripTrailingDecoration(normalized);
+  if ((CLOSING_PHRASES as readonly string[]).includes(stripped)) return true;
+  return isCloseToAnyClosingPhrase(stripped);
 }
 
 function isSelfDeferral(normalized: string): boolean {
@@ -168,6 +243,7 @@ function detectRequestSignal(normalized: string): ActionReasonCode | null {
   if (matchesAny(normalized, INSTALLATION_KEYWORDS)) return "INSTALLATION_QUESTION";
   if (matchesAny(normalized, DISCOUNT_KEYWORDS)) return "DISCOUNT_REQUEST";
   if (matchesAny(normalized, BUYING_SIGNAL_KEYWORDS)) return "BUYING_SIGNAL";
+  if (matchesAny(normalized, CATALOG_REQUEST_KEYWORDS)) return "CATALOG_REQUEST";
   if (matchesAny(normalized, AVAILABILITY_KEYWORDS) && normalized.includes("?")) return "PRODUCT_AVAILABILITY";
   if (matchesAny(normalized, PHOTO_KEYWORDS)) return "CUSTOMER_QUESTION";
   if (normalized.includes("?")) return "CUSTOMER_QUESTION";

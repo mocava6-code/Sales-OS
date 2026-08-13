@@ -167,3 +167,56 @@ describe("classifyDeterministically — safety: never confidently resolves the r
     expect(result.resolved).toBe(false);
   });
 });
+
+// Phase 2/3 (post-Phase-1 production re-audit): improvements grounded in
+// real UNCERTAIN conversations found in production, not hypothetical gaps.
+describe("classifyDeterministically — Phase 3 deterministic coverage improvements", () => {
+  it('a one-character typo of a closing phrase ("perfcto") still resolves to NO_ACTION_REQUIRED', () => {
+    const result = classifyDeterministically(context({ recentEntries: [entry({ id: "e1", direction: "INBOUND", content: "perfcto" })] }));
+    expect(result.resolved).toBe(true);
+    expect(result.result?.actionState).toBe("NO_ACTION_REQUIRED");
+    expect(result.result?.reasonCode).toBe("CUSTOMER_CLOSING_ACKNOWLEDGEMENT");
+  });
+
+  it("a short word within edit-distance-1 of a SHORT closing phrase is NOT fuzzy-matched (collision risk too high)", () => {
+    // "sale" is edit-distance-1 from "vale" but is a real, unrelated word
+    // (as in "cuanto sale" — already handled by PRICE_KEYWORDS elsewhere).
+    const result = classifyDeterministically(context({ recentEntries: [entry({ id: "e1", direction: "INBOUND", content: "sale" })] }));
+    expect(result.resolved).toBe(false);
+  });
+
+  it('formal-register self-deferral ("voy a enviarle la propuesta") -> WAITING_ON_CUSTOMER, same as the informal "te" register', () => {
+    const result = classifyDeterministically(context({ recentEntries: [entry({ id: "e1", direction: "INBOUND", content: "Genial, voy a enviarle la propuesta y le estoy avisando.." })] }));
+    expect(result.resolved).toBe(true);
+    expect(result.result?.actionState).toBe("WAITING_ON_CUSTOMER");
+    expect(result.result?.reasonCode).toBe("CUSTOMER_SELF_DEFERRED");
+  });
+
+  it('formal-register self-deferral ("le confirmo") -> WAITING_ON_CUSTOMER', () => {
+    const result = classifyDeterministically(context({ recentEntries: [entry({ id: "e1", direction: "INBOUND", content: "Ok le confirmo gracias" })] }));
+    expect(result.resolved).toBe(true);
+    expect(result.result?.actionState).toBe("WAITING_ON_CUSTOMER");
+  });
+
+  it('formal-register advisor commitment ("le envío la cotización") is treated the same as "te envío"', () => {
+    const result = classifyDeterministically(
+      context({
+        recentEntries: [
+          entry({ id: "e1", direction: "INBOUND", content: "Cuanto cuesta el kit?" }),
+          entry({ id: "e2", direction: "OUTBOUND", content: "En un momento le envío la cotización." }),
+          entry({ id: "e3", direction: "INBOUND", content: "Ok gracias" }),
+        ],
+      }),
+    );
+    expect(result.resolved).toBe(true);
+    expect(result.result?.actionState).toBe("FOLLOW_UP_REQUIRED");
+    expect(result.result?.reasonCode).toBe("ADVISOR_COMMITMENT_PENDING");
+  });
+
+  it('an imperative catalog request ("mandame tu catalago para ver que tienes") -> REPLY_REQUIRED / CATALOG_REQUEST', () => {
+    const result = classifyDeterministically(context({ recentEntries: [entry({ id: "e1", direction: "INBOUND", content: "mandame tu catalago para ver que tienes" })] }));
+    expect(result.resolved).toBe(true);
+    expect(result.result?.actionState).toBe("REPLY_REQUIRED");
+    expect(result.result?.reasonCode).toBe("CATALOG_REQUEST");
+  });
+});
