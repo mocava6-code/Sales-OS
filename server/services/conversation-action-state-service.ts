@@ -417,9 +417,19 @@ export function resolveOperationalActionState(conversationLastEntryAt: Date, sto
 
 export interface TodayActionGroupEntry {
   leadId: string;
+  leadName: string;
+  leadPhone: string;
   conversationId: string | null;
   actionState: ActionState;
   reasonCode: string;
+  /** A short, concrete next step for the advisor, when the classifier produced one (never invented client-side). */
+  recommendedAction: string | null;
+  /** The conversation's own lastEntryAt — null only for a lead with zero conversations. */
+  lastActivityAt: Date | null;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+  productInterest: string | null;
+  assignedAdvisorName: string | null;
 }
 
 export interface TodayActionGroups {
@@ -465,7 +475,10 @@ export async function groupLeadsByOperationalActionState(businessId: string, db:
     where: { businessId },
     select: {
       id: true,
-      commercialProfile: { select: { nextAction: true } },
+      name: true,
+      phone: true,
+      assignedTo: { select: { name: true } },
+      commercialProfile: { select: { nextAction: true, vehicleBrand: true, vehicleModel: true, productInterest: true } },
       followUps: { select: { status: true, dueAt: true } },
       conversations: {
         orderBy: { lastEntryAt: "desc" },
@@ -481,8 +494,17 @@ export async function groupLeadsByOperationalActionState(businessId: string, db:
   const groups = emptyTodayActionGroups();
 
   for (const lead of leads) {
+    const commonFields = {
+      leadName: lead.name,
+      leadPhone: lead.phone,
+      vehicleBrand: lead.commercialProfile?.vehicleBrand ?? null,
+      vehicleModel: lead.commercialProfile?.vehicleModel ?? null,
+      productInterest: lead.commercialProfile?.productInterest ?? null,
+      assignedAdvisorName: lead.assignedTo?.name ?? null,
+    };
+
     if (lead.conversations.length === 0) {
-      groups.uncertain.push({ leadId: lead.id, conversationId: null, actionState: "UNCERTAIN", reasonCode: "UNCERTAIN_CONTEXT" });
+      groups.uncertain.push({ ...commonFields, leadId: lead.id, conversationId: null, actionState: "UNCERTAIN", reasonCode: "UNCERTAIN_CONTEXT", recommendedAction: null, lastActivityAt: null });
       continue;
     }
 
@@ -521,7 +543,15 @@ export async function groupLeadsByOperationalActionState(businessId: string, db:
 
     const mostActionable = selectMostActionableConversation(lead.conversations, (c) => resolvedByConversationId.get(c.id)!.actionState);
     const resolved = resolvedByConversationId.get(mostActionable!.id)!;
-    bucketFor(groups, resolved.actionState).push({ leadId: lead.id, conversationId: mostActionable!.id, actionState: resolved.actionState, reasonCode: resolved.reasonCode });
+    bucketFor(groups, resolved.actionState).push({
+      ...commonFields,
+      leadId: lead.id,
+      conversationId: mostActionable!.id,
+      actionState: resolved.actionState,
+      reasonCode: resolved.reasonCode,
+      recommendedAction: resolved.recommendedAction,
+      lastActivityAt: mostActionable!.lastEntryAt,
+    });
   }
 
   return groups;

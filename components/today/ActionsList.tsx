@@ -2,12 +2,6 @@ import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { FollowUpItem } from "@/components/follow-ups/FollowUpItem";
 
-type UnansweredConversation = {
-  id: string;
-  lastEntryAt: Date;
-  lead: { id: string; name: string };
-};
-
 type OverdueFollowUp = {
   id: string;
   leadId: string;
@@ -22,42 +16,20 @@ type HighPriorityLead = {
   status: string;
 };
 
+// "Unanswered customers" moved to OperationalActionsList (Phase 8 —
+// Semantic Response Intelligence), which reads through
+// groupLeadsByOperationalActionState instead of a raw Conversation.status
+// count. Overdue follow-ups and high-priority leads are a different
+// concern (deal urgency, not "does this need a reply") and stay here.
 export function ActionsList({
-  unansweredConversations,
   overdueFollowUps,
   highPriorityLeads,
 }: {
-  unansweredConversations: UnansweredConversation[];
   overdueFollowUps: OverdueFollowUp[];
   highPriorityLeads: HighPriorityLead[];
 }) {
   return (
     <section className="space-y-4">
-      <h2 className="text-lg font-semibold text-neutral-900">Actions requiring attention</h2>
-
-      <Card>
-        <h3 className="text-sm font-medium text-neutral-500">Unanswered customers</h3>
-        {unansweredConversations.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-400">Nothing waiting on a reply.</p>
-        ) : (
-          <ul className="mt-2 divide-y divide-neutral-100">
-            {unansweredConversations.map((conversation) => (
-              <li key={conversation.id} className="py-2">
-                <Link
-                  href={`/leads/${conversation.lead.id}`}
-                  className="font-medium text-neutral-900"
-                >
-                  {conversation.lead.name}
-                </Link>
-                <p className="text-sm text-neutral-500">
-                  Waiting since {conversation.lastEntryAt.toLocaleDateString()}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
       <Card>
         <h3 className="text-sm font-medium text-neutral-500">Overdue follow-ups</h3>
         {overdueFollowUps.length === 0 ? (

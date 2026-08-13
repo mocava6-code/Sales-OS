@@ -1,16 +1,18 @@
 import { verifySession } from "@/lib/auth/dal";
 import { listHighPriorityLeads } from "@/server/services/lead-service";
-import { listUnansweredConversations } from "@/server/services/conversation-service";
 import { listOverdueFollowUps } from "@/server/services/follow-up-service";
+import { groupLeadsByOperationalActionState } from "@/server/services/conversation-action-state-service";
 import { ActionsList } from "@/components/today/ActionsList";
+import { OperationalActionsList } from "@/components/today/OperationalActionsList";
 import { StartFlowEmptyState } from "@/components/today/StartFlowEmptyState";
 import { DailyInsightEmptyState } from "@/components/today/DailyInsightEmptyState";
 
 export default async function TodayPage() {
   const user = await verifySession();
+  const now = new Date();
 
-  const [unansweredConversations, overdueFollowUps, highPriorityLeads] = await Promise.all([
-    listUnansweredConversations(user.businessId),
+  const [operationalGroups, overdueFollowUps, highPriorityLeads] = await Promise.all([
+    groupLeadsByOperationalActionState(user.businessId),
     listOverdueFollowUps(user.businessId),
     listHighPriorityLeads(user.businessId),
   ]);
@@ -22,11 +24,9 @@ export default async function TodayPage() {
         <p className="text-sm text-neutral-500">Welcome back, {user.name.split(" ")[0]}</p>
       </header>
 
-      <ActionsList
-        unansweredConversations={unansweredConversations}
-        overdueFollowUps={overdueFollowUps}
-        highPriorityLeads={highPriorityLeads}
-      />
+      <OperationalActionsList groups={operationalGroups} now={now} />
+
+      <ActionsList overdueFollowUps={overdueFollowUps} highPriorityLeads={highPriorityLeads} />
 
       <StartFlowEmptyState />
       <DailyInsightEmptyState />

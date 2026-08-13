@@ -22,17 +22,6 @@ function defaultRecordDomainEvent(input: RecordDomainEventInput, db: PrismaClien
   return recordDomainEventDefault(input, { transactionRunner: new PrismaTransactionRunner(db as PrismaClient) });
 }
 
-export async function listUnansweredConversations(businessId: string) {
-  return prisma.conversation.findMany({
-    where: {
-      businessId,
-      lastEntryDirection: "INBOUND",
-      status: { not: "CLOSED" },
-    },
-    include: { lead: true },
-    orderBy: { lastEntryAt: "asc" },
-  });
-}
 
 export interface FindOrCreateWhatsAppConversationResult {
   id: string;

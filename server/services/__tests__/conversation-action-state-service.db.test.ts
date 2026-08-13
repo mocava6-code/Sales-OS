@@ -145,6 +145,29 @@ describe.skipIf(!shouldRunDbTests)("conversation-action-state-service (RUN_DB_TE
     expect(result).toEqual({ created: false, updated: false, skippedReason: "CONVERSATION_NOT_FOUND" });
   });
 
+  it("groupLeadsByOperationalActionState enriches every entry with the fields Today needs — name, phone, vehicle/product, assigned advisor, recommendedAction, lastActivityAt", async () => {
+    const t1 = new Date("2026-08-01T00:00:00Z");
+    await addEntry(fixture.conversationId, "INBOUND", "¿Cuánto cuesta el envío?", t1);
+    await db!.conversation.update({ where: { id: fixture.conversationId }, data: { lastEntryAt: t1, lastEntryDirection: "INBOUND" } });
+    // fixture's lead is already assignedToUserId: fixture.userId by default (see createTestFixture).
+    await db!.leadCommercialProfile.create({
+      data: { leadId: fixture.leadId, businessId: fixture.businessId, vehicleBrand: "Toyota", vehicleModel: "Hilux", productInterest: "TRAVO kit" },
+    });
+
+    const groups = await groupLeadsByOperationalActionState(fixture.businessId, db!);
+    const entry = groups.replyRequired.find((e) => e.leadId === fixture.leadId);
+
+    expect(entry).toBeDefined();
+    expect(entry?.leadName).toBe("Test Lead");
+    expect(entry?.leadPhone).toBe("+10000000000");
+    expect(entry?.vehicleBrand).toBe("Toyota");
+    expect(entry?.vehicleModel).toBe("Hilux");
+    expect(entry?.productInterest).toBe("TRAVO kit");
+    expect(entry?.assignedAdvisorName).toBe("Test Advisor");
+    expect(entry?.lastActivityAt?.toISOString()).toBe(t1.toISOString());
+    expect(entry?.reasonCode).toBe("PRICE_REQUEST");
+  });
+
   it("groupLeadsByOperationalActionState buckets every lead via the same canonical resolver Kori uses, including a lead with no conversation at all", async () => {
     const t1 = new Date("2026-08-01T00:00:00Z");
     await addEntry(fixture.conversationId, "INBOUND", "¿Cuánto cuesta el envío?", t1);

@@ -63,3 +63,36 @@ export const ACTION_REASON_CODES = [
 export type ActionReasonCode = (typeof ACTION_REASON_CODES)[number];
 
 export const actionReasonCodeSchema = z.enum(ACTION_REASON_CODES);
+
+/**
+ * Short, advisor-facing labels for Today (Phase 8) and anywhere else a
+ * human needs to see WHY a conversation landed where it did — kept next to
+ * the taxonomy itself so a new reason code and its label can never drift
+ * out of sync (TypeScript's Record<ActionReasonCode, string> below fails to
+ * compile if one is ever missing).
+ */
+export const ACTION_REASON_CODE_LABELS: Record<ActionReasonCode, string> = {
+  CUSTOMER_QUESTION: "Asked a question",
+  PRICE_REQUEST: "Asked about price",
+  PRODUCT_AVAILABILITY: "Asked about availability",
+  COMPATIBILITY_QUESTION: "Asked about compatibility",
+  INSTALLATION_QUESTION: "Asked about installation",
+  DELIVERY_REQUEST: "Asked about delivery",
+  PAYMENT_REQUEST: "Asked how to pay",
+  CATALOG_REQUEST: "Asked for the catalog",
+  CUSTOMER_OBJECTION: "Raised an objection",
+  BUYING_SIGNAL: "Ready to buy",
+  DISCOUNT_REQUEST: "Asked for a discount",
+  ADVISOR_COMMITMENT_PENDING: "You promised something, not yet sent",
+  FOLLOW_UP_DUE: "Follow-up is overdue",
+  PAYMENT_CONFIRMATION_PENDING: "Payment requested, not yet confirmed",
+  DELIVERY_CONFIRMATION_PENDING: "Delivery details pending",
+  QUOTATION_PROMISED: "Quotation promised, not yet sent",
+  WAITING_FOR_CUSTOMER_DECISION: "Waiting on the customer's decision",
+  CUSTOMER_SELF_DEFERRED: "Customer said they'll follow up",
+  CUSTOMER_CLOSING_ACKNOWLEDGEMENT: "Closed politely, nothing pending",
+  CONVERSATION_NOT_COMMERCIAL: "Not a sales conversation",
+  CUSTOMER_DECLINED: "Customer declined",
+  UNCERTAIN_CONTEXT: "Not enough context to tell",
+  AMBIGUOUS_INTENT: "Meaning is ambiguous",
+};
