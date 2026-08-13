@@ -113,6 +113,59 @@ describe("parseNaturalLanguageToKoriQuery — supported questions (STEP 4)", () 
     expect(JSON.stringify(call)).not.toMatch(/biz-[a-z0-9-]/i);
   });
 
+  // Phase 9 — actionState/reasonCode: previously entirely unexposed to the
+  // NL layer (the filter existed in query-spec.ts/query-executor.ts but
+  // the model had no way to know it existed), so these confirm both new
+  // fields are actually reachable end to end, not just validated once
+  // Groq happens to produce them.
+  it("11. ¿Quién realmente necesita respuesta? -> LIST_LEADS + actionState=REPLY_REQUIRED", async () => {
+    const { spec } = await parseWithMock("¿Quién realmente necesita respuesta?", '{"operation":"LIST_LEADS","filters":{"actionState":"REPLY_REQUIRED"}}');
+    expect(spec.operation).toBe("LIST_LEADS");
+    expect(spec.filters?.actionState).toBe("REPLY_REQUIRED");
+  });
+
+  it("12. ¿Quién lleva más tiempo esperando? -> LIST_LEADS + actionState=REPLY_REQUIRED + sort lastActivityAt asc", async () => {
+    const { spec } = await parseWithMock(
+      "¿Quién lleva más tiempo esperando?",
+      '{"operation":"LIST_LEADS","filters":{"actionState":"REPLY_REQUIRED"},"sort":{"field":"lastActivityAt","direction":"asc"}}',
+    );
+    expect(spec.filters?.actionState).toBe("REPLY_REQUIRED");
+    expect(spec.sort).toEqual({ field: "lastActivityAt", direction: "asc" });
+  });
+
+  it("13. ¿Quién está esperando al cliente? -> LIST_LEADS + actionState=WAITING_ON_CUSTOMER", async () => {
+    const { spec } = await parseWithMock("¿Quién está esperando al cliente?", '{"operation":"LIST_LEADS","filters":{"actionState":"WAITING_ON_CUSTOMER"}}');
+    expect(spec.filters?.actionState).toBe("WAITING_ON_CUSTOMER");
+  });
+
+  it("14. ¿Qué casos tengo que revisar? -> LIST_LEADS + actionState=UNCERTAIN", async () => {
+    const { spec } = await parseWithMock("¿Qué casos tengo que revisar?", '{"operation":"LIST_LEADS","filters":{"actionState":"UNCERTAIN"}}');
+    expect(spec.filters?.actionState).toBe("UNCERTAIN");
+  });
+
+  it("15. ¿A quién le prometimos algo? -> LIST_LEADS + actionState=FOLLOW_UP_REQUIRED + reasonCode=ADVISOR_COMMITMENT_PENDING", async () => {
+    const { spec } = await parseWithMock(
+      "¿A quién le prometimos algo?",
+      '{"operation":"LIST_LEADS","filters":{"actionState":"FOLLOW_UP_REQUIRED","reasonCode":"ADVISOR_COMMITMENT_PENDING"}}',
+    );
+    expect(spec.filters?.actionState).toBe("FOLLOW_UP_REQUIRED");
+    expect(spec.filters?.reasonCode).toBe("ADVISOR_COMMITMENT_PENDING");
+  });
+
+  it("16. ¿Quién está esperando una cotización? -> LIST_LEADS + reasonCode=QUOTATION_PROMISED", async () => {
+    const { spec } = await parseWithMock("¿Quién está esperando una cotización?", '{"operation":"LIST_LEADS","filters":{"reasonCode":"QUOTATION_PROMISED"}}');
+    expect(spec.filters?.reasonCode).toBe("QUOTATION_PROMISED");
+  });
+
+  it("the SCHEMA section of the system prompt documents actionState and reasonCode (never lets the model guess an unlisted filter)", async () => {
+    const { groqClient } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '{"operation":"COUNT_LEADS"}');
+    const call = groqClient.complete.mock.calls[0][0] as GroqCompletionRequest;
+    expect(call.systemPrompt).toContain("actionState");
+    expect(call.systemPrompt).toContain("REPLY_REQUIRED");
+    expect(call.systemPrompt).toContain("reasonCode");
+    expect(call.systemPrompt).toContain("ADVISOR_COMMITMENT_PENDING");
+  });
+
   it("strips a markdown code fence Groq may wrap the JSON in", async () => {
     const { spec } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '```json\n{"operation":"COUNT_LEADS"}\n```');
     expect(spec.operation).toBe("COUNT_LEADS");

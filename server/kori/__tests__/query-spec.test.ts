@@ -24,6 +24,19 @@ describe("parseKoriQuerySpec", () => {
     expect(() => parseKoriQuerySpec({ operation: "DELETE_LEADS" })).toThrow(InvalidKoriQuerySpecError);
   });
 
+  it("accepts a valid reasonCode filter, composed with actionState", () => {
+    const spec = parseKoriQuerySpec({
+      operation: "LIST_LEADS",
+      filters: { actionState: "FOLLOW_UP_REQUIRED", reasonCode: "ADVISOR_COMMITMENT_PENDING" },
+    });
+    expect(spec.filters?.reasonCode).toBe("ADVISOR_COMMITMENT_PENDING");
+    expect(spec.filters?.actionState).toBe("FOLLOW_UP_REQUIRED");
+  });
+
+  it("rejects a reasonCode value outside the bounded taxonomy", () => {
+    expect(() => parseKoriQuerySpec({ operation: "LIST_LEADS", filters: { reasonCode: "NOT_A_REAL_REASON" } })).toThrow(InvalidKoriQuerySpecError);
+  });
+
   it("rejects a smuggled businessId key at the top level", () => {
     expect(() => parseKoriQuerySpec({ operation: "COUNT_LEADS", businessId: "biz-1" })).toThrow(InvalidKoriQuerySpecError);
   });

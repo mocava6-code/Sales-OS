@@ -21,6 +21,7 @@
 // it never relaxes or duplicates that validation.
 
 import {
+  ACTION_STATE_FILTER_VALUES,
   CUSTOMER_TYPE_FILTER_VALUES,
   KORI_GROUP_BY_FIELDS,
   KORI_QUERY_OPERATIONS,
@@ -29,6 +30,7 @@ import {
   LEAD_STATUS_VALUES,
   OUTCOME_TYPE_VALUES,
 } from "./query-spec";
+import { ACTION_REASON_CODES } from "../intelligence/response-action/reason-codes";
 import { UnsupportedKoriQuestionError } from "./errors";
 import type { GroqJsonSchema } from "./groq-client";
 
@@ -48,6 +50,8 @@ const FILTERS_PROPERTIES = {
   productInterest: NULLABLE_STRING,
   customerType: nullableEnum(CUSTOMER_TYPE_FILTER_VALUES),
   needsReply: NULLABLE_BOOLEAN,
+  actionState: nullableEnum(ACTION_STATE_FILTER_VALUES),
+  reasonCode: nullableEnum(ACTION_REASON_CODES),
   overdueFollowUp: NULLABLE_BOOLEAN,
   leadStatus: nullableEnum(LEAD_STATUS_VALUES),
   priority: nullableEnum(LEAD_PRIORITY_VALUES),

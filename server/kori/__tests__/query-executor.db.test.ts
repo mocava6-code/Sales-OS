@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidKoriQuerySpecError } from "../errors";
 import { executeKoriQuery } from "../query-executor";
+import { parseKoriQuerySpec } from "../query-spec";
 import { createDecisionRecordFixture, createTestFixture, getTestPrisma, shouldRunDbTests, type TestFixture } from "../../persistence/__tests__/test-db";
 
 type Db = ReturnType<typeof getTestPrisma>;
@@ -661,6 +662,71 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
       const list = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "LIST_LEADS", filters: { actionState: "UNCERTAIN" } }, db: db! });
       if (list.type !== "lead_list") throw new Error("expected lead_list");
       expect(list.rows.map((r) => r.leadId)).toContain(lead.id);
+    });
+  });
+
+  describe("reasonCode filter — Phase 9 (finer-grained cut than actionState)", () => {
+    async function createLeadWithMessage(opts: { phone: string; content: string; direction?: "INBOUND" | "OUTBOUND" }) {
+      const lead = await db!.lead.create({ data: { businessId: fixture.businessId, name: opts.phone, phone: opts.phone } });
+      const now = new Date();
+      const conversation = await db!.conversation.create({
+        data: {
+          businessId: fixture.businessId,
+          leadId: lead.id,
+          source: "MANUAL_PASTE",
+          status: (opts.direction ?? "INBOUND") === "INBOUND" ? "NEEDS_REPLY" : "WAITING_ON_CUSTOMER",
+          lastEntryAt: now,
+          lastEntryDirection: opts.direction ?? "INBOUND",
+          createdByUserId: fixture.userId,
+        },
+      });
+      await db!.conversationEntry.create({ data: { conversationId: conversation.id, direction: opts.direction ?? "INBOUND", content: opts.content, occurredAt: now } });
+      return { lead, conversation };
+    }
+
+    it('reasonCode=ADVISOR_COMMITMENT_PENDING answers "¿A quién le prometimos algo?" — never confused with FOLLOW_UP_DUE', async () => {
+      const promised = await db!.lead.create({ data: { businessId: fixture.businessId, name: "+51900001009", phone: "+51900001009" } });
+      const promisedConversation = await db!.conversation.create({
+        data: { businessId: fixture.businessId, leadId: promised.id, source: "MANUAL_PASTE", status: "WAITING_ON_CUSTOMER", lastEntryAt: new Date(), lastEntryDirection: "OUTBOUND", createdByUserId: fixture.userId },
+      });
+      await db!.conversationEntry.create({ data: { conversationId: promisedConversation.id, direction: "OUTBOUND", content: "En 10 minutos te envío la cotización.", occurredAt: new Date() } });
+
+      // A different FOLLOW_UP_REQUIRED lead via an overdue FollowUp — same actionState, DIFFERENT reasonCode.
+      const { lead: overdueLead } = await createLeadWithMessage({ phone: "+51900001010", content: "Gracias" });
+      await db!.followUp.create({ data: { userId: fixture.userId, leadId: overdueLead.id, dueAt: new Date(Date.now() - 60_000), status: "PENDING" } });
+
+      const list = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { reasonCode: "ADVISOR_COMMITMENT_PENDING" } },
+        db: db!,
+      });
+      if (list.type !== "lead_list") throw new Error("expected lead_list");
+      expect(list.rows.map((r) => r.leadId)).toEqual([promised.id]);
+      expect(list.rows[0].actionState).toBe("FOLLOW_UP_REQUIRED");
+    });
+
+    it("composes with actionState — both must match", async () => {
+      const { lead } = await createLeadWithMessage({ phone: "+51900001011", content: "¿Tienen algún descuento?" });
+
+      const matching = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { actionState: "REPLY_REQUIRED", reasonCode: "DISCOUNT_REQUEST" } },
+        db: db!,
+      });
+      if (matching.type !== "lead_list") throw new Error("expected lead_list");
+      expect(matching.rows.map((r) => r.leadId)).toEqual([lead.id]);
+
+      const mismatched = await executeKoriQuery({
+        businessId: fixture.businessId,
+        querySpec: { operation: "LIST_LEADS", filters: { actionState: "NO_ACTION_REQUIRED", reasonCode: "DISCOUNT_REQUEST" } },
+        db: db!,
+      });
+      if (mismatched.type !== "lead_list") throw new Error("expected lead_list");
+      expect(mismatched.rows.map((r) => r.leadId)).not.toContain(lead.id);
+    });
+
+    it("reasonCode is validated against the classifier taxonomy — a human-override-only code (e.g. MARKED_NO_ACTION_REQUIRED) is rejected as an invalid filter, not silently accepted", () => {
+      expect(() => parseKoriQuerySpec({ operation: "LIST_LEADS", filters: { reasonCode: "MARKED_NO_ACTION_REQUIRED" } })).toThrow(InvalidKoriQuerySpecError);
     });
   });
 });

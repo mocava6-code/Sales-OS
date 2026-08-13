@@ -13,6 +13,7 @@
 // best-effort guess.
 
 import {
+  ACTION_STATE_FILTER_VALUES,
   CUSTOMER_TYPE_FILTER_VALUES,
   KORI_GROUP_BY_FIELDS,
   KORI_QUERY_OPERATIONS,
@@ -23,6 +24,7 @@ import {
   parseKoriQuerySpec,
   type KoriQuerySpec,
 } from "./query-spec";
+import { ACTION_REASON_CODES } from "../intelligence/response-action/reason-codes";
 import { InvalidKoriQuerySpecError, KoriNaturalLanguageParseError, UnsupportedKoriQuestionError } from "./errors";
 import { KORI_DATE_TOKENS, KORI_DEFAULT_TIMEZONE, resolveDateTokensInQueryJson } from "./date-interpretation";
 import { createGroqClientFromEnv, type GroqClient } from "./groq-client";
@@ -158,7 +160,10 @@ filters (always an object; every key below always present, null when unused):
   vehicleBrand (string or null), vehicleModel (string or null), vehicleYear (integer or null),
   productInterest (string or null),
   customerType (one of ${CUSTOMER_TYPE_FILTER_VALUES.join(", ")}, or null),
-  needsReply (boolean or null), overdueFollowUp (boolean or null),
+  needsReply (boolean or null) — "which side sent the last message" (a transport fact, not whether an advisor genuinely needs to act — see actionState below),
+  actionState (one of ${ACTION_STATE_FILTER_VALUES.join(", ")}, or null) — the real question "does an advisor need to do something here," never confused with needsReply. REPLY_REQUIRED = customer needs an answer now. FOLLOW_UP_REQUIRED = the advisor/company has an unresolved commitment (a promised quote, a promised callback) even if the customer's own last message looks closed. WAITING_ON_CUSTOMER = the advisor already replied, ball is in the customer's court. NO_ACTION_REQUIRED = genuinely nothing pending. UNCERTAIN = needs human review — use this for "revisar"/"casos ambiguos" style questions.
+  reasonCode (one of ${ACTION_REASON_CODES.join(", ")}, or null) — a finer cut than actionState for a specific reason, e.g. "¿a quién le prometimos algo?" -> reasonCode ADVISOR_COMMITMENT_PENDING (composes with actionState FOLLOW_UP_REQUIRED), "¿quién pidió descuento?" -> reasonCode DISCOUNT_REQUEST. Only set this when the question asks about a SPECIFIC reason, not a general state.
+  overdueFollowUp (boolean or null),
   leadStatus (one of ${LEAD_STATUS_VALUES.join(", ")}, or null),
   priority (one of ${LEAD_PRIORITY_VALUES.join(", ")}, or null),
   assignedAgentId (string or null),
@@ -184,7 +189,15 @@ The examples below show which fields matter for each SUPPORTED question — filt
 "¿Cuántos leads nuevos entraron esta semana?" -> {"operation":"COUNT_LEADS","filters":{"createdFrom":"THIS_WEEK_START"}}
 "¿Cuántas cotizaciones enviamos esta semana?" -> {"operation":"COUNT_OUTCOMES","filters":{"outcomeType":"QUOTATION_SENT","createdFrom":"THIS_WEEK_START"}}
 "¿Quién necesita seguimiento hoy?" -> {"operation":"FOLLOW_UP_QUEUE"}
-"Muéstrame los mayoristas de Toyota" -> {"operation":"LIST_LEADS","filters":{"vehicleBrand":"Toyota","customerType":"WHOLESALE"}}`;
+"Muéstrame los mayoristas de Toyota" -> {"operation":"LIST_LEADS","filters":{"vehicleBrand":"Toyota","customerType":"WHOLESALE"}}
+"¿Quién realmente necesita respuesta?" -> {"operation":"LIST_LEADS","filters":{"actionState":"REPLY_REQUIRED"}}
+"¿Quién lleva más tiempo esperando?" -> {"operation":"LIST_LEADS","filters":{"actionState":"REPLY_REQUIRED"},"sort":{"field":"lastActivityAt","direction":"asc"}}
+"¿Quién está esperando al cliente?" -> {"operation":"LIST_LEADS","filters":{"actionState":"WAITING_ON_CUSTOMER"}}
+"¿Qué conversaciones no necesitan acción?" -> {"operation":"LIST_LEADS","filters":{"actionState":"NO_ACTION_REQUIRED"}}
+"¿Qué casos tengo que revisar?" -> {"operation":"LIST_LEADS","filters":{"actionState":"UNCERTAIN"}}
+"¿A quién le prometimos algo?" -> {"operation":"LIST_LEADS","filters":{"actionState":"FOLLOW_UP_REQUIRED","reasonCode":"ADVISOR_COMMITMENT_PENDING"}}
+"¿Quién está esperando una cotización?" -> {"operation":"LIST_LEADS","filters":{"reasonCode":"QUOTATION_PROMISED"}}
+"¿Qué clientes Toyota necesitan respuesta?" -> {"operation":"LIST_LEADS","filters":{"vehicleBrand":"Toyota","actionState":"REPLY_REQUIRED"}}`;
 }
 
 function shouldUseJsonSchemaMode(): boolean {

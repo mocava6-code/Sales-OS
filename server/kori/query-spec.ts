@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InvalidKoriQuerySpecError } from "./errors";
+import { actionReasonCodeSchema, type ActionReasonCode } from "../intelligence/response-action/reason-codes";
 
 // Kori Natural Language Analytics v0 — the deterministic query contract a
 // future NL layer (Groq) will target. Never accepts businessId — that only
@@ -80,6 +81,15 @@ const koriQueryFiltersSchema = z
     customerType: z.enum(CUSTOMER_TYPE_FILTER_VALUES).optional(),
     needsReply: z.boolean().optional(),
     actionState: z.enum(ACTION_STATE_FILTER_VALUES).optional(),
+    /**
+     * A finer-grained cut than actionState — "¿A quién le prometimos algo?"
+     * is reasonCode=ADVISOR_COMMITMENT_PENDING, "¿quién pidió descuento?"
+     * is reasonCode=DISCOUNT_REQUEST, etc. Composes with actionState (both
+     * may be set at once) rather than each reason getting its own
+     * special-cased boolean filter — one coherent primitive covers every
+     * reason code the taxonomy already defines, including ones added later.
+     */
+    reasonCode: actionReasonCodeSchema.optional(),
     overdueFollowUp: z.boolean().optional(),
     leadStatus: z.enum(LEAD_STATUS_VALUES).optional(),
     priority: z.enum(LEAD_PRIORITY_VALUES).optional(),
@@ -158,6 +168,8 @@ export interface KoriLeadRow {
   needsReply: boolean;
   /** Semantic Response Intelligence v0's canonical operational state — see server/services/conversation-action-state-service.ts's resolveOperationalActionState. Distinct from needsReply (see ACTION_STATE_FILTER_VALUES's doc comment). */
   actionState: (typeof ACTION_STATE_FILTER_VALUES)[number];
+  /** The specific reason behind actionState (e.g. ADVISOR_COMMITMENT_PENDING, DISCOUNT_REQUEST) — "UNCERTAIN_CONTEXT" when actionState itself wasn't evaluated for this query (see toLeadRow's own doc comment). */
+  reasonCode: ActionReasonCode;
   nextFollowUpDueAt: string | null;
   lastActivityAt: string | null;
 }

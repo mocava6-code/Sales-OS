@@ -113,6 +113,7 @@ describe("askKori — orchestration", () => {
         customerType: null,
         needsReply: true,
         actionState: "UNCERTAIN" as const,
+        reasonCode: "UNCERTAIN_CONTEXT" as const,
         nextFollowUpDueAt: null,
         lastActivityAt: null,
       },

@@ -142,9 +142,11 @@ function toLeadRow(lead: LeadForRow): KoriLeadRow {
     // Conservative default — this row shape doesn't fetch the entries/
     // structural signals Semantic Response Intelligence needs (see
     // fetchActionAwareLeadRows for the real computation, used whenever
-    // spec.filters.actionState is set). UNCERTAIN here means "not
-    // evaluated for this query," never a guess.
+    // spec.filters.actionState/reasonCode is set). UNCERTAIN/
+    // UNCERTAIN_CONTEXT here mean "not evaluated for this query," never a
+    // guess.
     actionState: "UNCERTAIN",
+    reasonCode: "UNCERTAIN_CONTEXT",
     nextFollowUpDueAt: nextFollowUp ? nextFollowUp.dueAt.toISOString() : null,
     lastActivityAt: activeConversation ? activeConversation.lastEntryAt.toISOString() : null,
   };
@@ -266,6 +268,7 @@ function toActionAwareLeadRow(lead: LeadForActionAwareRow): KoriLeadRow {
     customerType: (lead.commercialProfile?.customerType as KoriLeadRow["customerType"]) ?? null,
     needsReply: false,
     actionState: "UNCERTAIN",
+    reasonCode: "UNCERTAIN_CONTEXT",
     nextFollowUpDueAt: nextFollowUp ? nextFollowUp.dueAt.toISOString() : null,
     lastActivityAt: lead.conversations[0] ? lead.conversations[0].lastEntryAt.toISOString() : null,
   };
@@ -286,6 +289,7 @@ function toActionAwareLeadRow(lead: LeadForActionAwareRow): KoriLeadRow {
     ...baseRow,
     needsReply: needsReplyConversation.status === "NEEDS_REPLY",
     actionState: resolved.actionState,
+    reasonCode: resolved.reasonCode as KoriLeadRow["reasonCode"],
   };
 }
 
@@ -305,7 +309,12 @@ async function fetchActionAwareLeadRows(
   const createdAtByLeadId = new Map(leads.map((lead) => [lead.id, lead.createdAt]));
   const rows = leads
     .map(toActionAwareLeadRow)
-    .filter((row) => (filters!.needsReply === undefined || row.needsReply === filters!.needsReply) && (filters!.actionState === undefined || row.actionState === filters!.actionState));
+    .filter(
+      (row) =>
+        (filters!.needsReply === undefined || row.needsReply === filters!.needsReply) &&
+        (filters!.actionState === undefined || row.actionState === filters!.actionState) &&
+        (filters!.reasonCode === undefined || row.reasonCode === filters!.reasonCode),
+    );
   return { rows, createdAtByLeadId };
 }
 
@@ -333,7 +342,7 @@ function sortRowsByCreatedAtInMemory(rows: KoriLeadRow[], createdAtByLeadId: Map
 }
 
 function needsAugmentedFetch(filters: LeadFilters): boolean {
-  return filters?.needsReply !== undefined || filters?.actionState !== undefined;
+  return filters?.needsReply !== undefined || filters?.actionState !== undefined || filters?.reasonCode !== undefined;
 }
 
 async function executeCountLeads(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
