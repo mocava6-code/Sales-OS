@@ -16,7 +16,7 @@ export function ConversationListItem({ conversation }: { conversation: Conversat
         </div>
         <div className="text-right text-sm text-neutral-500">
           <p>{formatDate(new Date(conversation.lastEntryAt))}</p>
-          <p>{conversation.observationCount} observación{conversation.observationCount === 1 ? "" : "es"}</p>
+          <p>{conversation.observationCount} {conversation.observationCount === 1 ? "observación" : "observaciones"}</p>
         </div>
       </Card>
     </Link>
