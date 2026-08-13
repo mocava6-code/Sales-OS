@@ -195,6 +195,8 @@ The examples below show which fields matter for each SUPPORTED question — filt
 "¿Quién está esperando al cliente?" -> {"operation":"LIST_LEADS","filters":{"actionState":"WAITING_ON_CUSTOMER"}}
 "¿Qué conversaciones no necesitan acción?" -> {"operation":"LIST_LEADS","filters":{"actionState":"NO_ACTION_REQUIRED"}}
 "¿Qué casos tengo que revisar?" -> {"operation":"LIST_LEADS","filters":{"actionState":"UNCERTAIN"}}
+"¿Qué conversaciones terminaron y no necesitan respuesta?" -> {"operation":"LIST_LEADS","filters":{"actionState":"NO_ACTION_REQUIRED"}}
+"¿Qué conversaciones se cerraron sin necesitar nada más?" -> {"operation":"LIST_LEADS","filters":{"actionState":"NO_ACTION_REQUIRED"}}
 "¿A quién le prometimos algo?" -> {"operation":"LIST_LEADS","filters":{"actionState":"FOLLOW_UP_REQUIRED","reasonCode":"ADVISOR_COMMITMENT_PENDING"}}
 "¿Quién está esperando una cotización?" -> {"operation":"LIST_LEADS","filters":{"reasonCode":"QUOTATION_PROMISED"}}
 "¿Qué clientes Toyota necesitan respuesta?" -> {"operation":"LIST_LEADS","filters":{"vehicleBrand":"Toyota","actionState":"REPLY_REQUIRED"}}`;

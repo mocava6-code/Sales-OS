@@ -157,6 +157,20 @@ describe("parseNaturalLanguageToKoriQuery — supported questions (STEP 4)", () 
     expect(spec.filters?.reasonCode).toBe("QUOTATION_PROMISED");
   });
 
+  // Phase 10 production finding: this exact compound phrasing ("terminaron
+  // y no necesitan respuesta") failed against real Groq even though a
+  // simpler paraphrase of the identical intent ("no necesitan acción")
+  // worked — a genuine classifier gap, not a parser/executor bug. Fixed by
+  // adding this phrasing as its own trained example rather than assuming
+  // the model would generalize from a differently-worded one.
+  it("17. ¿Qué conversaciones terminaron y no necesitan respuesta? -> LIST_LEADS + actionState=NO_ACTION_REQUIRED", async () => {
+    const { spec } = await parseWithMock(
+      "¿Qué conversaciones terminaron y no necesitan respuesta?",
+      '{"operation":"LIST_LEADS","filters":{"actionState":"NO_ACTION_REQUIRED"}}',
+    );
+    expect(spec.filters?.actionState).toBe("NO_ACTION_REQUIRED");
+  });
+
   it("the SCHEMA section of the system prompt documents actionState and reasonCode (never lets the model guess an unlisted filter)", async () => {
     const { groqClient } = await parseWithMock("¿Cuántos clientes necesitan respuesta?", '{"operation":"COUNT_LEADS"}');
     const call = groqClient.complete.mock.calls[0][0] as GroqCompletionRequest;
