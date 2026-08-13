@@ -17,6 +17,8 @@ export class PrismaOutcomeRepository implements OutcomeRepository {
   async record(input: RecordOutcomeInput): Promise<OutcomeRecord> {
     const row = await this.db.outcome.create({
       data: {
+        businessId: input.businessId,
+        conversationId: input.conversationId,
         decisionRecordId: input.decisionRecordId,
         outcomeType: input.outcomeType,
         attribution: input.attribution,

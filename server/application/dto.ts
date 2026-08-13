@@ -98,11 +98,50 @@ export interface OutcomeSummaryDTO {
 export function toOutcomeSummaryDTO(record: OutcomeRecord): OutcomeSummaryDTO {
   return {
     id: record.id,
-    decisionRecordId: record.decisionRecordId,
+    // Safe: this DTO's only caller (decision-actions.ts's runOutcomeAction)
+    // is exclusively reached via server/orchestration/outcome-workflows.ts,
+    // which always records a decisionRecordId — the decision-less path
+    // (Kori Sales Memory v1) produces a ConversationOutcomeDTO instead.
+    decisionRecordId: record.decisionRecordId!,
     outcomeType: record.outcomeType,
     attribution: record.attribution,
     notes: record.notes,
     occurredAt: record.occurredAt,
+  };
+}
+
+// Kori Sales Memory v1 — deliberately a separate, smaller DTO from
+// OutcomeSummaryDTO above rather than reusing it: that one is shaped around
+// the Decision Engine's attribution workflow (a required decisionRecordId),
+// this one is the lightweight "Marcar resultado" path's result, which never
+// has one.
+export interface ConversationOutcomeDTO {
+  id: string;
+  conversationId: string;
+  outcomeType: string;
+  lostReason: string | null;
+  productSold: string | null;
+  notes: string | null;
+  occurredAt: Date;
+}
+
+export function toConversationOutcomeDTO(outcome: {
+  id: string;
+  conversationId: string;
+  outcomeType: string;
+  lostReason: string | null;
+  productSold: string | null;
+  notes: string | null;
+  occurredAt: Date;
+}): ConversationOutcomeDTO {
+  return {
+    id: outcome.id,
+    conversationId: outcome.conversationId,
+    outcomeType: outcome.outcomeType,
+    lostReason: outcome.lostReason,
+    productSold: outcome.productSold,
+    notes: outcome.notes,
+    occurredAt: outcome.occurredAt,
   };
 }
 

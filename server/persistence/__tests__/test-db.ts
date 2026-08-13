@@ -82,7 +82,10 @@ export async function createDecisionRecordFixture(db: PrismaClient, fixture: Tes
 
 /** Deletes everything a fixture (and any test writes hung off it) created, leaf-to-root. */
 export async function cleanupTestFixture(db: PrismaClient, fixture: TestFixture): Promise<void> {
-  await db.outcome.deleteMany({ where: { decisionRecord: { conversationId: fixture.conversationId } } });
+  // Outcome's own conversationId (Kori Sales Memory v1) — not the
+  // decisionRecord join — so this sweeps both decision-attached outcomes
+  // and the decision-less ones the lightweight recording path creates.
+  await db.outcome.deleteMany({ where: { conversationId: fixture.conversationId } });
   await db.advisorAction.deleteMany({ where: { decisionRecord: { conversationId: fixture.conversationId } } });
   await db.decisionEvent.deleteMany({ where: { decisionRecord: { conversationId: fixture.conversationId } } });
   await db.decisionRecord.deleteMany({ where: { conversationId: fixture.conversationId } });

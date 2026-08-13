@@ -133,6 +133,8 @@ export function toAdvisorActionDomain(row: AdvisorActionRow): AdvisorActionRecor
 export function toOutcomeDomain(row: OutcomeRow): OutcomeRecord {
   return {
     id: row.id,
+    businessId: row.businessId,
+    conversationId: row.conversationId,
     decisionRecordId: row.decisionRecordId,
     outcomeType: row.outcomeType,
     attribution: row.attribution,

@@ -90,7 +90,9 @@ describe.skipIf(!shouldRunDbTests)("askKori — end-to-end against real Postgres
   it("COUNT_OUTCOMES: counts a real Outcome row for this business", async () => {
     const decisionRecordId = await createDecisionRecordFixture(db, fixture);
     decisionRecordIdForCleanup = decisionRecordId;
-    await db.outcome.create({ data: { decisionRecordId, outcomeType: "QUOTATION_SENT", occurredAt: new Date() } });
+    await db.outcome.create({
+      data: { businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "QUOTATION_SENT", occurredAt: new Date() },
+    });
 
     const groqClient = fakeGroqClient('{"operation":"COUNT_OUTCOMES","filters":{"outcomeType":"QUOTATION_SENT"}}');
     const output = await askKori({ businessId: fixture.businessId, question: "¿Cuántas cotizaciones enviamos?" }, { groqClient, db });

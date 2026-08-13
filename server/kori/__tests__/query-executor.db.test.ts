@@ -96,7 +96,9 @@ async function createOutcome(
   occurredAt: Date,
 ) {
   const decisionRecordId = await createDecisionRecordFixture(db, fixtureLike);
-  return db.outcome.create({ data: { decisionRecordId, outcomeType, occurredAt } });
+  return db.outcome.create({
+    data: { businessId: fixtureLike.businessId, conversationId: fixtureLike.conversationId, decisionRecordId, outcomeType, occurredAt },
+  });
 }
 
 /** Sweeps everything for a businessId (base fixture lead + every lead created in a test), then deletes user/business. */

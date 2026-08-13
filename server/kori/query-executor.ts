@@ -474,8 +474,13 @@ async function executeFollowUpQueue(businessId: string, spec: KoriQuerySpec, db:
 
 async function executeCountOutcomes(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
   const f = spec.filters;
+  // Filters via the Outcome's own businessId/conversationId (Kori Sales
+  // Memory v1) — not decisionRecord.businessId — so this counts every
+  // outcome, including the ones the lightweight "Marcar resultado" path
+  // records with no decision behind them at all.
   const where: Prisma.OutcomeWhereInput = {
-    decisionRecord: { businessId, conversation: { lead: buildLeadFilterConditions(f, { includeCreatedAtFilter: false }) } },
+    businessId,
+    conversation: { lead: buildLeadFilterConditions(f, { includeCreatedAtFilter: false }) },
   };
   if (f?.outcomeType) where.outcomeType = f.outcomeType;
   if (f?.createdFrom || f?.createdTo) {

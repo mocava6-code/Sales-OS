@@ -169,7 +169,10 @@ export async function getKoriBriefing(businessId: string, now: Date = new Date()
  * show, which is the whole point: a summary sentence that's wrong is worse
  * than no summary sentence.
  */
-export function buildPulseSummary(briefing: Pick<KoriBriefing, "stats" | "alerts" | "demandSignals">): string {
+export function buildPulseSummary(
+  briefing: Pick<KoriBriefing, "stats" | "alerts" | "demandSignals">,
+  commercialConversationsThisMonth?: number,
+): string {
   const { replyRequiredCount } = briefing.stats;
   const { staleReplyCount } = briefing.alerts;
   const topDemand = briefing.demandSignals[0];
@@ -181,6 +184,10 @@ export function buildPulseSummary(briefing: Pick<KoriBriefing, "stats" | "alerts
     parts.push(`${replyRequiredCount} ${replyRequiredCount === 1 ? "cliente requiere" : "clientes requieren"} respuesta ahora${staleClause}.`);
   } else {
     parts.push("Nadie requiere respuesta en este momento.");
+  }
+
+  if (commercialConversationsThisMonth !== undefined) {
+    parts.push(`${commercialConversationsThisMonth} ${commercialConversationsThisMonth === 1 ? "conversación comercial" : "conversaciones comerciales"} este mes.`);
   }
 
   if (topDemand) {

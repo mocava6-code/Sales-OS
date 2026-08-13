@@ -33,6 +33,8 @@ async function recordOutcome(
     assertOutcomeRecordable(current.decision.status, outcomeType, input.attribution);
 
     const outcome = await uow.outcomes.record({
+      businessId: current.businessId,
+      conversationId: current.conversationId,
       decisionRecordId: input.decisionRecordId,
       outcomeType,
       attribution: input.attribution,

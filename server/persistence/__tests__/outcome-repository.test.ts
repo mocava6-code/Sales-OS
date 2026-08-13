@@ -26,6 +26,8 @@ describe.skipIf(!shouldRunDbTests)("PrismaOutcomeRepository (RUN_DB_TESTS=true)"
 
   it("records a commercial outcome with notes", async () => {
     const outcome = await repo!.record({
+      businessId: fixture.businessId,
+      conversationId: fixture.conversationId,
       decisionRecordId,
       outcomeType: "QUOTATION_SENT",
       notes: "Sent a quote for the base trim kit.",
@@ -38,27 +40,29 @@ describe.skipIf(!shouldRunDbTests)("PrismaOutcomeRepository (RUN_DB_TESTS=true)"
   });
 
   it("defaults notes to null when omitted", async () => {
-    const outcome = await repo!.record({ decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
+    const outcome = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
     expect(outcome.notes).toBeNull();
   });
 
   it("round-trips attribution, and defaults it to null when omitted", async () => {
     const attributed = await repo!.record({
+      businessId: fixture.businessId,
+      conversationId: fixture.conversationId,
       decisionRecordId,
       outcomeType: "SALE_CLOSED",
       attribution: "ADVISOR_ALTERNATIVE",
     });
     expect(attributed.attribution).toBe("ADVISOR_ALTERNATIVE");
 
-    const unattributed = await repo!.record({ decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
+    const unattributed = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
     expect(unattributed.attribution).toBeNull();
   });
 
   it("is append-only: a decision's thread can accumulate a full outcome sequence over time", async () => {
-    const replied = await repo!.record({ decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
-    const requested = await repo!.record({ decisionRecordId, outcomeType: "QUOTATION_REQUESTED" });
-    const sent = await repo!.record({ decisionRecordId, outcomeType: "QUOTATION_SENT" });
-    const closed = await repo!.record({ decisionRecordId, outcomeType: "SALE_CLOSED" });
+    const replied = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "CUSTOMER_REPLIED" });
+    const requested = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "QUOTATION_REQUESTED" });
+    const sent = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "QUOTATION_SENT" });
+    const closed = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "SALE_CLOSED" });
 
     const history = await repo!.listForDecision(decisionRecordId);
 
@@ -72,7 +76,7 @@ describe.skipIf(!shouldRunDbTests)("PrismaOutcomeRepository (RUN_DB_TESTS=true)"
   });
 
   it("supports SALE_LOST and ABANDONED", async () => {
-    const lost = await repo!.record({ decisionRecordId, outcomeType: "SALE_LOST", notes: "Went with a competitor." });
+    const lost = await repo!.record({ businessId: fixture.businessId, conversationId: fixture.conversationId, decisionRecordId, outcomeType: "SALE_LOST", notes: "Went with a competitor." });
     expect(lost.outcomeType).toBe("SALE_LOST");
   });
 });

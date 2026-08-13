@@ -225,13 +225,16 @@ export async function auditDuplicateLeadPhones(db: PrismaClient = prisma, busine
   // Conversation -> Lead) — one bounded query, aggregated in memory.
   // Pilot-scale data volume only (see server/kori/query-executor.ts's own
   // documented limitation for the same join).
+  // Queried via the outcome's own conversationId (Kori Sales Memory v1) —
+  // not via decisionRecord.conversation — so this counts every outcome,
+  // including the ones with no decision behind them at all.
   const outcomeRows = await db.outcome.findMany({
-    where: businessId ? { decisionRecord: { businessId } } : undefined,
-    select: { decisionRecord: { select: { conversation: { select: { leadId: true } } } } },
+    where: businessId ? { businessId } : undefined,
+    select: { conversation: { select: { leadId: true } } },
   });
   const outcomeCountByLeadId = new Map<string, number>();
   for (const row of outcomeRows) {
-    const leadId = row.decisionRecord.conversation.leadId;
+    const leadId = row.conversation.leadId;
     outcomeCountByLeadId.set(leadId, (outcomeCountByLeadId.get(leadId) ?? 0) + 1);
   }
 

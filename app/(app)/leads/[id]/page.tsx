@@ -10,6 +10,7 @@ import { NoConversationsForLeadError } from "@/server/intelligence/lead-commerci
 import type { LeadCommercialStateDTO } from "@/server/lead-commercial-state/types";
 import { formatDate, formatDateTime } from "@/lib/copy/format";
 import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
+import { RecordOutcomeSheet } from "@/components/outcomes/RecordOutcomeSheet";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -61,6 +62,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           Agregar seguimiento
         </Link>
       </div>
+
+      {lead.conversations.length > 0 && (
+        <RecordOutcomeSheet conversationId={lead.conversations[0].id} suggestedProduct={commercialState?.productInterest.value ?? null} />
+      )}
 
       {commercialState && <LeadCommercialStateCard state={commercialState} />}
 

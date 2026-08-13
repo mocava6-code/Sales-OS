@@ -215,7 +215,9 @@ describe.skipIf(!shouldRunDbTests)("planLeadMerge (RUN_DB_TESTS=true)", () => {
       },
     });
     const decisionRecordId = await createDecisionRecordFixture(db!, { businessId: fixture.businessId, userId: fixture.userId, leadId: loser.id, conversationId: loserConv.id });
-    const outcome = await db!.outcome.create({ data: { decisionRecordId, outcomeType: "SALE_CLOSED" } });
+    const outcome = await db!.outcome.create({
+      data: { businessId: fixture.businessId, conversationId: loserConv.id, decisionRecordId, outcomeType: "SALE_CLOSED" },
+    });
 
     try {
       const plan = await planLeadMerge(db!, { businessId: fixture.businessId, survivorLeadId: survivor.id, loserLeadId: loser.id });

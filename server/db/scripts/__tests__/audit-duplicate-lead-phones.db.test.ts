@@ -144,7 +144,9 @@ describe.skipIf(!shouldRunDbTests)("auditDuplicateLeadPhones (RUN_DB_TESTS=true)
       leadId: dup1.id,
       conversationId: newerConv.id,
     });
-    const outcome = await db!.outcome.create({ data: { decisionRecordId, outcomeType: "SALE_CLOSED" } });
+    const outcome = await db!.outcome.create({
+      data: { businessId: fixture.businessId, conversationId: newerConv.id, decisionRecordId, outcomeType: "SALE_CLOSED" },
+    });
 
     try {
       const result = await auditDuplicateLeadPhones(db!, fixture.businessId);

@@ -167,6 +167,8 @@ function createFakeOutcomeRepository(store: FakeStore): OutcomeRepository {
     async record(input: RecordOutcomeInput): Promise<OutcomeRecord> {
       const saved: OutcomeRecord = {
         id: randomUUID(),
+        businessId: input.businessId,
+        conversationId: input.conversationId,
         decisionRecordId: input.decisionRecordId,
         outcomeType: input.outcomeType,
         attribution: input.attribution ?? null,

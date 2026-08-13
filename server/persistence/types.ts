@@ -121,7 +121,8 @@ export type OutcomeType =
   | "QUOTATION_SENT"
   | "SALE_CLOSED"
   | "SALE_LOST"
-  | "ABANDONED";
+  | "ABANDONED"
+  | "NOT_AN_OPPORTUNITY";
 
 /**
  * What actually produced the outcome. Required for SALE_CLOSED/SALE_LOST,
@@ -132,6 +133,8 @@ export type OutcomeType =
 export type OutcomeAttribution = "KORI_RECOMMENDATION" | "ADVISOR_ALTERNATIVE" | "UNATTRIBUTED";
 
 export interface RecordOutcomeInput {
+  businessId: string;
+  conversationId: string;
   decisionRecordId: string;
   outcomeType: OutcomeType;
   attribution?: OutcomeAttribution;
@@ -141,7 +144,9 @@ export interface RecordOutcomeInput {
 
 export interface OutcomeRecord {
   id: string;
-  decisionRecordId: string;
+  businessId: string;
+  conversationId: string;
+  decisionRecordId: string | null;
   outcomeType: OutcomeType;
   attribution: OutcomeAttribution | null;
   notes: string | null;

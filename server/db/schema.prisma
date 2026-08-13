@@ -184,6 +184,11 @@ enum OutcomeType {
   SALE_CLOSED
   SALE_LOST
   ABANDONED
+  // Kori Sales Memory v1 — this conversation was never a real commercial
+  // opportunity (spam, a test message, the wrong customer). Excluded from
+  // "commercial conversations this month" and every conversion-rate
+  // computation, so noise never dilutes the real numbers.
+  NOT_AN_OPPORTUNITY
 }
 
 // What actually produced an outcome — required for SALE_CLOSED/SALE_LOST,
@@ -251,6 +256,7 @@ model Business {
   pendingWhatsAppMessages  PendingWhatsAppMessage[]
   domainEvents             DomainEvent[]
   observations             Observation[]
+  outcomes                 Outcome[]
   conversationActionStates ConversationActionState[]
 
   // Knowledge Ingestion v1
@@ -286,6 +292,7 @@ model User {
   advisorActions         AdvisorAction[]
   queuedWhatsAppMessages PendingWhatsAppMessage[]
   conversationActionStatesSetByHuman ConversationActionState[] @relation("ConversationActionStateSetBy")
+  outcomesRecorded       Outcome[]
 
   // Knowledge Ingestion v1
   knowledgeSourcesCreated     KnowledgeSource[]
@@ -361,6 +368,7 @@ model Conversation {
   domainEvents            DomainEvent[]
   observations            Observation[]
   actionState             ConversationActionState?
+  outcomes                Outcome[]
 
   @@index([businessId])
   @@index([leadId])
@@ -713,23 +721,53 @@ model AdvisorAction {
   @@map("advisor_actions")
 }
 
-// The commercial result that followed a decision. Append-only — a single
-// decision's thread can accumulate a sequence of outcomes over time
-// (customer replied, then a quotation was sent, then the sale closed).
+// The commercial result that followed a decision — OR, since Kori Sales
+// Memory v1, the commercial result of a conversation with no decision
+// behind it at all. decisionRecordId is deliberately optional: the Decision
+// Engine only started producing real decisions once an AI provider was
+// configured, so requiring one here would make outcome recording
+// unusable for the vast majority of leads. businessId/conversationId are
+// always present regardless of which path recorded the row, so every
+// consumer (Kori's COUNT_OUTCOMES, conversion intelligence) can query one
+// way without caring whether a decision was involved.
+//
+// Append-only — a single conversation's thread can accumulate a sequence
+// of outcomes over time (customer replied, then a quotation was sent, then
+// the sale closed).
 model Outcome {
   id               String              @id @default(uuid())
-  decisionRecordId String
-  decisionRecord   DecisionRecord      @relation(fields: [decisionRecordId], references: [id])
+  businessId       String
+  business         Business            @relation(fields: [businessId], references: [id])
+  conversationId   String
+  conversation     Conversation        @relation(fields: [conversationId], references: [id])
+  decisionRecordId String?
+  decisionRecord   DecisionRecord?     @relation(fields: [decisionRecordId], references: [id])
   outcomeType      OutcomeType
   // Required for SALE_CLOSED/SALE_LOST, optional otherwise — enforced at the
-  // orchestration boundary (server/orchestration/outcome-attribution-policy.ts),
-  // not by a DB constraint, since the requirement is conditional on outcomeType.
+  // orchestration boundary (server/orchestration/outcome-attribution-policy.ts)
+  // when a decision is involved, not by a DB constraint, since the
+  // requirement is conditional on outcomeType. The decision-less path
+  // always records UNATTRIBUTED — there is no recommendation to attribute to.
   attribution      OutcomeAttribution?
   notes            String?
+  // Only meaningful when outcomeType = SALE_LOST — a bounded, evolving
+  // business taxonomy (same "plain string, not a native enum" philosophy
+  // as ActionReasonCode: validated by a Zod enum on write, not the DB, so a
+  // new reason never needs a migration).
+  lostReason       String?
+  // Only meaningful when outcomeType = SALE_CLOSED — what was actually
+  // sold, which can differ from LeadCommercialProfile.productInterest
+  // (what the customer was asking about). Free text, prefilled from
+  // productInterest at record time for convenience, always editable.
+  productSold      String?
+  recordedByUserId String?
+  recordedBy       User?               @relation(fields: [recordedByUserId], references: [id])
   occurredAt       DateTime            @default(now())
   createdAt        DateTime            @default(now())
 
   @@index([decisionRecordId])
+  @@index([businessId])
+  @@index([conversationId])
   @@map("outcomes")
 }
 
