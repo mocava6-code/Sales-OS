@@ -20,6 +20,8 @@ const STALE_REPLY_HOURS = 48;
 const DEMAND_WINDOW_DAYS = 7;
 const MAX_OPPORTUNITIES = 5;
 const MAX_DEMAND_SIGNALS = 5;
+const NEEDS_OUTCOME_STALE_DAYS = 5;
+const MAX_NEEDS_OUTCOME_NUDGES = 5;
 
 /** Reason codes that mean "this is money on the table," not just "someone needs to reply." */
 const BUYING_SIGNAL_REASON_CODES = new Set<ActionReasonCode>(["BUYING_SIGNAL", "DISCOUNT_REQUEST"]);
@@ -30,12 +32,36 @@ const STALLED_COMMITMENT_REASON_CODES = new Set<ActionReasonCode>([
   "DELIVERY_CONFIRMATION_PENDING",
 ]);
 
+/**
+ * Kori Sales Memory v1's adoption nudge — the reason codes that mean real
+ * buying intent was in motion (a signal, a promised quote, a decision the
+ * customer was weighing) rather than routine back-and-forth. A lead stuck
+ * here that's gone quiet almost certainly ended somehow — sale, loss, or
+ * genuinely abandoned — and "Marcar resultado" is the fastest way to find
+ * out which, closing Kori's own blind spot rather than just flagging it.
+ */
+const NEEDS_OUTCOME_REASON_CODES = new Set<ActionReasonCode>([
+  "BUYING_SIGNAL",
+  "DISCOUNT_REQUEST",
+  "QUOTATION_PROMISED",
+  "WAITING_FOR_CUSTOMER_DECISION",
+  "ADVISOR_COMMITMENT_PENDING",
+]);
+
 export interface KoriOpportunity {
   leadId: string;
   leadName: string;
   vehicleLine: string | null;
   reasonCode: ActionReasonCode;
   kind: "buying_signal" | "stalled_commitment";
+  waitingSince: Date | null;
+}
+
+export interface KoriNeedsOutcomeNudge {
+  leadId: string;
+  leadName: string;
+  vehicleLine: string | null;
+  reasonCode: ActionReasonCode;
   waitingSince: Date | null;
 }
 
@@ -49,6 +75,7 @@ export interface KoriBriefing {
   opportunities: KoriOpportunity[];
   alerts: { staleReplyCount: number; unassignedHighPriorityCount: number };
   pendingDecisions: PendingDecisionPreview[];
+  needsOutcomeNudges: KoriNeedsOutcomeNudge[];
   demandSignals: { label: string; count: number; percentage: number }[];
   demandWindowDays: number;
   demandSampleSize: number;
@@ -101,6 +128,35 @@ export function countStaleReplies(entries: TodayActionGroupEntry[], now: Date): 
   return entries.filter((entry) => entry.lastActivityAt !== null && now.getTime() - entry.lastActivityAt.getTime() >= staleThresholdMs).length;
 }
 
+/**
+ * Kori Sales Memory v1's adoption nudge. A lead that showed real buying
+ * intent (see NEEDS_OUTCOME_REASON_CODES), hasn't been touched in
+ * NEEDS_OUTCOME_STALE_DAYS, and has never had an outcome recorded — Kori
+ * genuinely doesn't know what happened to it. Distinct from opportunities
+ * (act on this now, forward-looking) — this is "tell us what already
+ * happened," so a lead never appears in both at once in practice (an
+ * opportunity implies recent activity; this implies the opposite), but
+ * the two are deliberately independent derivations, not mutually exclusive
+ * by construction.
+ */
+export function deriveNeedsOutcomeNudges(entries: TodayActionGroupEntry[], conversationIdsWithOutcome: Set<string>, now: Date): KoriNeedsOutcomeNudge[] {
+  const staleThresholdMs = NEEDS_OUTCOME_STALE_DAYS * 24 * 60 * 60 * 1000;
+
+  return entries
+    .filter((entry) => NEEDS_OUTCOME_REASON_CODES.has(entry.reasonCode as ActionReasonCode))
+    .filter((entry) => entry.conversationId !== null && !conversationIdsWithOutcome.has(entry.conversationId))
+    .filter((entry) => entry.lastActivityAt !== null && now.getTime() - entry.lastActivityAt.getTime() >= staleThresholdMs)
+    .sort((a, b) => (a.lastActivityAt?.getTime() ?? 0) - (b.lastActivityAt?.getTime() ?? 0))
+    .slice(0, MAX_NEEDS_OUTCOME_NUDGES)
+    .map((entry) => ({
+      leadId: entry.leadId,
+      leadName: entry.leadName || entry.leadPhone,
+      vehicleLine: vehicleLineFor(entry),
+      reasonCode: entry.reasonCode as ActionReasonCode,
+      waitingSince: entry.lastActivityAt,
+    }));
+}
+
 interface DemandGroup { label: string; count: number }
 
 async function fetchDemandGroups(businessId: string, groupBy: "vehicleBrand" | "productInterest", createdFrom: string): Promise<DemandGroup[]> {
@@ -120,7 +176,7 @@ export async function getKoriBriefing(businessId: string, now: Date = new Date()
   const demandWindowStart = new Date(now.getTime() - DEMAND_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const demandWindowStartIso = demandWindowStart.toISOString();
 
-  const [actionGroups, overdueFollowUps, highPriorityLeads, leadsInWindow, pendingDecisions, pendingDecisionsCount, brandGroups, productGroups] =
+  const [actionGroups, overdueFollowUps, highPriorityLeads, leadsInWindow, pendingDecisions, pendingDecisionsCount, brandGroups, productGroups, conversationIdsWithOutcome] =
     await Promise.all([
       groupLeadsByOperationalActionState(businessId),
       listOverdueFollowUps(businessId),
@@ -130,9 +186,11 @@ export async function getKoriBriefing(businessId: string, now: Date = new Date()
       prisma.decisionRecord.count({ where: { businessId, status: "PROPOSED" } }),
       fetchDemandGroups(businessId, "vehicleBrand", demandWindowStartIso),
       fetchDemandGroups(businessId, "productInterest", demandWindowStartIso),
+      prisma.outcome.findMany({ where: { businessId }, select: { conversationId: true } }).then((rows) => new Set(rows.map((r) => r.conversationId))),
     ]);
 
   const actionableEntries = [...actionGroups.replyRequired, ...actionGroups.followUpRequired];
+  const allActionEntries = [...actionableEntries, ...actionGroups.waitingOnCustomer];
 
   const demandSignals = [...brandGroups, ...productGroups]
     .sort((a, b) => b.count - a.count)
@@ -156,6 +214,7 @@ export async function getKoriBriefing(businessId: string, now: Date = new Date()
       unassignedHighPriorityCount: highPriorityLeads.filter((lead) => lead.assignedToUserId === null).length,
     },
     pendingDecisions,
+    needsOutcomeNudges: deriveNeedsOutcomeNudges(allActionEntries, conversationIdsWithOutcome, now),
     demandSignals,
     demandWindowDays: DEMAND_WINDOW_DAYS,
     demandSampleSize: leadsInWindow,

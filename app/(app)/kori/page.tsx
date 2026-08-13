@@ -5,6 +5,7 @@ import { resolveKoriDateToken, KORI_DEFAULT_TIMEZONE } from "@/server/kori/date-
 import { KoriPulseHeader } from "@/components/kori/KoriPulseHeader";
 import { KoriStatStrip } from "@/components/kori/KoriStatStrip";
 import { KoriOpportunitiesList } from "@/components/kori/KoriOpportunitiesList";
+import { KoriNeedsOutcomeNudges } from "@/components/kori/KoriNeedsOutcomeNudges";
 import { KoriAlertsList } from "@/components/kori/KoriAlertsList";
 import { KoriDecisionsPreview } from "@/components/kori/KoriDecisionsPreview";
 import { KoriDemandSignals } from "@/components/kori/KoriDemandSignals";
@@ -36,6 +37,8 @@ export default async function KoriPage() {
       <KoriStatStrip stats={briefing.stats} />
 
       <KoriOpportunitiesList opportunities={briefing.opportunities} now={now} />
+
+      <KoriNeedsOutcomeNudges nudges={briefing.needsOutcomeNudges} now={now} />
 
       <KoriAlertsList alerts={briefing.alerts} />
 

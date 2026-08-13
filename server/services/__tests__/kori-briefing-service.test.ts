@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TodayActionGroupEntry } from "../conversation-action-state-service";
-import { buildPulseSummary, countStaleReplies, deriveOpportunities, type KoriBriefing } from "../kori-briefing-service";
+import { buildPulseSummary, countStaleReplies, deriveNeedsOutcomeNudges, deriveOpportunities, type KoriBriefing } from "../kori-briefing-service";
 
 function entry(overrides: Partial<TodayActionGroupEntry> = {}): TodayActionGroupEntry {
   return {
@@ -138,5 +138,53 @@ describe("buildPulseSummary", () => {
       briefing({ stats: { replyRequiredCount: 5, overdueFollowUpCount: 0, newLeadsThisWeek: 0, pendingDecisionsCount: 0 } }),
     );
     expect(summary).not.toMatch(/[A-Z_]{4,}/);
+  });
+});
+
+describe("deriveNeedsOutcomeNudges", () => {
+  const now = new Date("2026-08-13T12:00:00.000Z");
+  const staleEnough = new Date("2026-08-06T11:00:00.000Z"); // 7d1h ago — past the 5-day threshold
+  const tooRecent = new Date("2026-08-10T12:00:00.000Z"); // 3d ago — under the threshold
+
+  it("keeps only buying-intent reason codes, dropping routine ones like CUSTOMER_QUESTION", () => {
+    const entries = [
+      entry({ leadId: "l1", reasonCode: "BUYING_SIGNAL", lastActivityAt: staleEnough }),
+      entry({ leadId: "l2", reasonCode: "CUSTOMER_QUESTION", lastActivityAt: staleEnough }),
+    ];
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(), now).map((n) => n.leadId)).toEqual(["l1"]);
+  });
+
+  it("excludes a lead whose conversation already has an outcome recorded", () => {
+    const entries = [entry({ leadId: "l1", conversationId: "conv-1", reasonCode: "BUYING_SIGNAL", lastActivityAt: staleEnough })];
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(["conv-1"]), now)).toEqual([]);
+  });
+
+  it("excludes a lead that hasn't gone stale yet", () => {
+    const entries = [entry({ leadId: "l1", reasonCode: "BUYING_SIGNAL", lastActivityAt: tooRecent })];
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(), now)).toEqual([]);
+  });
+
+  it("excludes a lead with no conversation (lastActivityAt null)", () => {
+    const entries = [entry({ leadId: "l1", conversationId: null, reasonCode: "BUYING_SIGNAL", lastActivityAt: null })];
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(), now)).toEqual([]);
+  });
+
+  it("sorts the longest-quiet lead first", () => {
+    const entries = [
+      entry({ leadId: "quiet-7d", reasonCode: "BUYING_SIGNAL", lastActivityAt: new Date("2026-08-06T12:00:00.000Z") }),
+      entry({ leadId: "quiet-20d", reasonCode: "BUYING_SIGNAL", lastActivityAt: new Date("2026-07-24T12:00:00.000Z") }),
+    ];
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(), now).map((n) => n.leadId)).toEqual(["quiet-20d", "quiet-7d"]);
+  });
+
+  it("caps the result at 5 nudges even with more candidates available", () => {
+    const entries = Array.from({ length: 8 }, (_, i) => entry({ leadId: `lead-${i}`, reasonCode: "BUYING_SIGNAL", lastActivityAt: staleEnough }));
+
+    expect(deriveNeedsOutcomeNudges(entries, new Set(), now)).toHaveLength(5);
   });
 });
