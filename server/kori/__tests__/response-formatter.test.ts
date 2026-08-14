@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveKoriDateToken } from "../date-interpretation";
 import { formatKoriResponse } from "../response-formatter";
 import type { KoriQueryResult, KoriQuerySpec } from "../query-spec";
 
@@ -77,7 +78,7 @@ describe("formatKoriResponse — GROUP_LEADS", () => {
 });
 
 describe("formatKoriResponse — PRODUCT_RANKING", () => {
-  it("phrases the ranking with counts in parentheses", () => {
+  it("phrases the ranking with counts in parentheses, and states the implicit last-30-days window (matches the dashboard's own default — query-executor.ts's executeProductRanking)", () => {
     const result: KoriQueryResult = {
       type: "grouped_result",
       groups: [
@@ -86,7 +87,43 @@ describe("formatKoriResponse — PRODUCT_RANKING", () => {
       ],
     };
     const formatted = formatKoriResponse(spec({ operation: "PRODUCT_RANKING" }), result, CONTEXT);
-    expect(formatted.answer).toBe("Los productos más consultados son: TRAVO body kit (12), Paragolpes (7).");
+    expect(formatted.answer).toBe("Los productos más consultados en los últimos 30 días son: TRAVO body kit (12), Paragolpes (7).");
+  });
+
+  it("uses the recognized date-range phrase instead of 'últimos 30 días' when the caller specified one explicitly", () => {
+    const result: KoriQueryResult = { type: "grouped_result", groups: [{ key: "TRAVO", count: 5 }] };
+    const thisMonthStart = resolveKoriDateToken("THIS_MONTH_START", NOW, TZ);
+    const formatted = formatKoriResponse(spec({ operation: "PRODUCT_RANKING", filters: { createdFrom: thisMonthStart } }), result, CONTEXT);
+    expect(formatted.answer).toBe("Los productos más consultados este mes son: TRAVO (5).");
+  });
+
+  it("adds an honest caveat naming how many clients have no product identified, without presenting them as classified", () => {
+    const result: KoriQueryResult = {
+      type: "grouped_result",
+      groups: [
+        { key: "kit", count: 9 },
+        { key: "accesorios", count: 1 },
+        { key: "Sin información", count: 40 },
+      ],
+    };
+    const formatted = formatKoriResponse(spec({ operation: "PRODUCT_RANKING" }), result, CONTEXT);
+    expect(formatted.answer).toBe(
+      "Los productos más consultados en los últimos 30 días son: kit (9), accesorios (1). " +
+        "40 de 50 clientes todavía no tienen un producto identificado — este ranking solo refleja los casos clasificados.",
+    );
+  });
+
+  it("omits the caveat entirely when every lead in range has a classified product", () => {
+    const result: KoriQueryResult = { type: "grouped_result", groups: [{ key: "kit", count: 3 }] };
+    const formatted = formatKoriResponse(spec({ operation: "PRODUCT_RANKING" }), result, CONTEXT);
+    expect(formatted.answer).not.toContain("todavía no tienen");
+  });
+
+  it("never claims a ranking exists when every lead in range is unclassified", () => {
+    const result: KoriQueryResult = { type: "grouped_result", groups: [{ key: "Sin información", count: 12 }] };
+    const formatted = formatKoriResponse(spec({ operation: "PRODUCT_RANKING" }), result, CONTEXT);
+    expect(formatted.answer).toBe("Todavía no hay productos identificados en los últimos 30 días — 12 clientes no tienen un producto de interés registrado.");
+    expect(formatted.answer).not.toContain("Los productos más consultados");
   });
 });
 

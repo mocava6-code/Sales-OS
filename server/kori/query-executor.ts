@@ -8,6 +8,7 @@ import {
   toConversationActionContext,
   type StoredActionStateForResolution,
 } from "@/server/services/conversation-action-state-service";
+import { INSIGHTS_PERIOD_DAYS } from "@/server/insights/constants";
 import { normalizeVehicleBrand, normalizeVehicleModel } from "./normalization";
 import { UNKNOWN_LABEL } from "@/lib/copy/labels";
 import { parseKoriQuerySpec, type KoriLeadRow, type KoriQueryResult, type KoriQuerySpec } from "./query-spec";
@@ -434,8 +435,25 @@ function applyGroupSort(groups: { key: string; count: number }[], sort: KoriQuer
   return [...groups].sort((a, b) => (a.count - b.count) * factor);
 }
 
+// Matches the "Rendimiento de producto" dashboard card's own window
+// (server/insights/product-performance.ts, INSIGHTS_PERIOD_DAYS) — a
+// customer asking Kori "¿qué producto preguntan más?" with no period of
+// their own expects the same answer they can already see on /kori, not a
+// silently different all-time count. Only applied when the caller (the NL
+// parser, or a direct KoriQuerySpec) didn't already specify a date range —
+// an explicit "el mes pasado"/"esta semana" filter always wins.
+function defaultProductRankingWindow(filters: KoriQuerySpec["filters"]): KoriQuerySpec["filters"] {
+  if (filters?.createdFrom || filters?.createdTo) return filters;
+  const createdFrom = new Date(Date.now() - INSIGHTS_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  return { ...filters, createdFrom };
+}
+
 async function executeProductRanking(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {
-  return executeGroupLeads(businessId, { ...spec, groupBy: "productInterest", sort: spec.sort ?? { field: "count", direction: "desc" } }, db);
+  return executeGroupLeads(
+    businessId,
+    { ...spec, filters: defaultProductRankingWindow(spec.filters), groupBy: "productInterest", sort: spec.sort ?? { field: "count", direction: "desc" } },
+    db,
+  );
 }
 
 async function executeFollowUpQueue(businessId: string, spec: KoriQuerySpec, db: PrismaClientOrTransaction): Promise<KoriQueryResult> {

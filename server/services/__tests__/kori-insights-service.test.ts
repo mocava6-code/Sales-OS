@@ -86,12 +86,26 @@ describe("deriveProblemCard", () => {
 });
 
 describe("deriveDataQualityCard", () => {
-  it("names the field with the highest missing percentage above the threshold — non-customerType fields keep the plain wording", () => {
+  it("names the field with the highest missing percentage above the threshold — non-customerType fields state concrete counts, not just a bare percentage", () => {
     const card = deriveDataQualityCard(
       dataQualityStats({ vehicleBrand: { missingCount: 6, missingPercentage: 60 }, productInterest: { missingCount: 5, missingPercentage: 50 } }),
       customerTypeCoverage(),
     );
-    expect(card).toEqual({ type: "DATO_FALTANTE", text: "Kori necesita más información sobre la marca del vehículo — 60% de tus clientes no tienen este dato." });
+    expect(card).toEqual({
+      type: "DATO_FALTANTE",
+      text: "Kori necesita más información sobre la marca del vehículo — identificado en 4 de 10 clientes (6 sin este dato, 60%).",
+    });
+  });
+
+  it("productInterest: a percentage can rise purely from new, not-yet-classified leads arriving — the count-based wording makes that legible instead of reading as a regression", () => {
+    // Real production shape: 79% -> 80% explained entirely by 4 new leads
+    // (total 62 -> 66) that haven't been classified yet, not by anything
+    // already-classified becoming unclassified.
+    const before = deriveDataQualityCard(dataQualityStats({ productInterest: { missingCount: 49, totalCount: 62, missingPercentage: 79 } }), customerTypeCoverage());
+    const after = deriveDataQualityCard(dataQualityStats({ productInterest: { missingCount: 53, totalCount: 66, missingPercentage: 80 } }), customerTypeCoverage());
+
+    expect(before?.text).toContain("identificado en 13 de 62 clientes (49 sin este dato, 79%)");
+    expect(after?.text).toContain("identificado en 13 de 66 clientes (53 sin este dato, 80%)");
   });
 
   it("returns null when no field clears the missing-percentage threshold", () => {

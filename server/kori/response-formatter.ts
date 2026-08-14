@@ -9,6 +9,7 @@
 // count) is preserved unmodified alongside `answer` so the UI can render
 // cards/lists later without re-deriving anything.
 
+import { UNKNOWN_LABEL } from "@/lib/copy/labels";
 import { resolveKoriDateToken, type KoriDateToken } from "./date-interpretation";
 import type { KoriQueryResult, KoriQuerySpec } from "./query-spec";
 
@@ -108,7 +109,27 @@ function buildAnswer(spec: KoriQuerySpec, result: KoriQueryResult, context: Form
     case "PRODUCT_RANKING": {
       if (result.type !== "grouped_result") throw new KoriFormatterInvariantError(spec.operation, result.type);
       if (result.groups.length === 0) return "No se encontraron productos consultados.";
-      return `Los productos más consultados son: ${result.groups.map((g) => `${g.key} (${g.count})`).join(", ")}.`;
+
+      // No caller-specified range -> executeProductRanking (query-executor.ts)
+      // defaults to the same last-30-days window the "Rendimiento de
+      // producto" dashboard card uses, so the phrasing must say so — a
+      // silently different implicit range than what the user can see on
+      // /kori is exactly the inconsistency this exists to prevent.
+      const dateLabel = describeDateRangeLabel(spec.filters?.createdFrom, context);
+      const periodClause = spec.filters?.createdFrom ? (dateLabel ? ` ${dateLabel}` : "") : " en los últimos 30 días";
+
+      const classified = result.groups.filter((g) => g.key !== UNKNOWN_LABEL);
+      const unclassified = result.groups.find((g) => g.key === UNKNOWN_LABEL);
+      const total = result.groups.reduce((sum, g) => sum + g.count, 0);
+
+      if (classified.length === 0) {
+        return `Todavía no hay productos identificados${periodClause} — ${total} ${pluralize(total, "cliente no tiene", "clientes no tienen")} un producto de interés registrado.`;
+      }
+
+      const ranking = `Los productos más consultados${periodClause} son: ${classified.map((g) => `${g.key} (${g.count})`).join(", ")}.`;
+      if (!unclassified || unclassified.count === 0) return ranking;
+
+      return `${ranking} ${unclassified.count} de ${total} ${pluralize(total, "cliente", "clientes")} todavía no ${pluralize(unclassified.count, "tiene", "tienen")} un producto identificado — este ranking solo refleja los casos clasificados.`;
     }
     case "FOLLOW_UP_QUEUE": {
       if (result.type !== "lead_list") throw new KoriFormatterInvariantError(spec.operation, result.type);

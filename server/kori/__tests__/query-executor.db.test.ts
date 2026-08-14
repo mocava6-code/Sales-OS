@@ -480,6 +480,38 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
     }
   });
 
+  it("PRODUCT_RANKING defaults to the last 30 days — same window as the 'Rendimiento de producto' dashboard card (server/insights/product-performance.ts) — when the caller specifies no date range", async () => {
+    const recent = new Date();
+    const old = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000); // outside the 30-day window
+
+    await createLead(db!, fixture.businessId, fixture.userId, { phone: "+10000000040", profile: { productInterest: "kit" }, createdAt: recent });
+    await createLead(db!, fixture.businessId, fixture.userId, { phone: "+10000000041", profile: { productInterest: "kit" }, createdAt: old });
+
+    const result = await executeKoriQuery({ businessId: fixture.businessId, querySpec: { operation: "PRODUCT_RANKING" }, db: db! });
+
+    expect(result.type).toBe("grouped_result");
+    if (result.type === "grouped_result") {
+      const kitGroup = result.groups.find((g) => g.key === "kit");
+      expect(kitGroup?.count).toBe(1); // only the recent lead — the 45-day-old one is out of the default window
+    }
+  });
+
+  it("PRODUCT_RANKING includes an explicit-old lead when the caller overrides the date range", async () => {
+    const old = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+    await createLead(db!, fixture.businessId, fixture.userId, { phone: "+10000000042", profile: { productInterest: "kit" }, createdAt: old });
+
+    const result = await executeKoriQuery({
+      businessId: fixture.businessId,
+      querySpec: { operation: "PRODUCT_RANKING", filters: { createdFrom: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString() } },
+      db: db!,
+    });
+
+    expect(result.type).toBe("grouped_result");
+    if (result.type === "grouped_result") {
+      expect(result.groups.find((g) => g.key === "kit")?.count).toBe(1);
+    }
+  });
+
   it("FOLLOW_UP_QUEUE with overdueFollowUp only returns PENDING + past-due, never SNOOZED", async () => {
     const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000);

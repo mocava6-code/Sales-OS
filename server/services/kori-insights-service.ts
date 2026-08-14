@@ -125,9 +125,16 @@ export function deriveDataQualityCard(stats: DataQualityStat[], customerTypeCove
     return { type: "DATO_FALTANTE", text: buildCustomerTypeDataQualityText(customerTypeCoverage) };
   }
 
+  // Concrete counts alongside the percentage — a bare "80%" doesn't say
+  // whether that's 4 of 5 clients or 53 of 66, and the same percentage can
+  // shift meaningfully just from new leads arriving faster than
+  // classification catches up (real production case: productInterest went
+  // 79%->80% purely from 4 new, not-yet-classified leads, total 62->66 —
+  // not a regression in anything already classified). Never hide that behind a rounded number alone.
+  const knownCount = worst.totalCount - worst.missingCount;
   return {
     type: "DATO_FALTANTE",
-    text: `Kori necesita más información sobre ${DATA_QUALITY_FIELD_LABELS[worst.field]} — ${worst.missingPercentage}% de tus clientes no tienen este dato.`,
+    text: `Kori necesita más información sobre ${DATA_QUALITY_FIELD_LABELS[worst.field]} — identificado en ${knownCount} de ${worst.totalCount} clientes (${worst.missingCount} sin este dato, ${worst.missingPercentage}%).`,
   };
 }
 

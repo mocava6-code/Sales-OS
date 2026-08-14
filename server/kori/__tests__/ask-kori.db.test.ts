@@ -84,7 +84,7 @@ describe.skipIf(!shouldRunDbTests)("askKori — end-to-end against real Postgres
     if (output.result.type === "grouped_result") {
       expect(output.result.groups).toEqual([{ key: "TRAVO body kit", count: 1 }]);
     }
-    expect(output.result.answer).toBe("Los productos más consultados son: TRAVO body kit (1).");
+    expect(output.result.answer).toBe("Los productos más consultados en los últimos 30 días son: TRAVO body kit (1).");
   });
 
   it("COUNT_OUTCOMES: counts a real Outcome row for this business", async () => {

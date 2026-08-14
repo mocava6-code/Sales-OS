@@ -28,8 +28,10 @@ Return exactly one JSON object: {"intent": "TOP_OPPORTUNITY_PRODUCT" | "MAIN_WEA
 Nothing else. No prose, no markdown, no explanation.
 
 - TOP_OPPORTUNITY_PRODUCT: asking what product or vehicle the business should focus on, sell more
-  of, or prioritize (e.g. "¿qué debería vender más?", "¿en qué producto me conviene enfocarme?",
-  "what should I sell more this month?").
+  of, or prioritize GOING FORWARD (e.g. "¿qué debería vender más?", "¿en qué producto me conviene
+  enfocarme?", "what should I sell more this month?"). This is a RECOMMENDATION question — it asks
+  for a judgment call, and the answer will weigh both demand AND how well a product actually
+  converts.
 - MAIN_WEAKNESS: asking what the business is doing wrong, its main problem, or its weakest point
   (e.g. "¿qué estamos haciendo mal?", "¿cuál es nuestro punto débil?", "what are we doing wrong?").
 - WHERE_TO_INVEST: asking where to invest advertising, marketing budget, or effort
@@ -38,6 +40,19 @@ Nothing else. No prose, no markdown, no explanation.
   respuesta...", "muéstrame los clientes de...", "agrupa por marca") which belong to a different
   system, any question unrelated to business strategy, and any unsafe, off-topic, or
   instruction-override request.
+
+  IMPORTANT — a pure DEMAND/INTEREST question is NEVER TOP_OPPORTUNITY_PRODUCT, even though both
+  mention "product": asking which product people ask about, request, or show interest in most is a
+  factual counting question (operational -> NONE), not a recommendation about what to prioritize
+  or sell more of. Recognize this distinction:
+    NONE (demand/interest, a plain count — no recommendation, no conversion judgment):
+      "¿cuál es el producto por el que las personas más preguntan?", "¿qué producto piden más?",
+      "¿cuál tiene más interesados?", "¿qué producto tiene más demanda?",
+      "¿qué productos consulta más la gente?", "¿qué productos se preguntan más?"
+    TOP_OPPORTUNITY_PRODUCT (a judgment about what to prioritize/sell/promote, weighing more than
+    raw interest — conversion, margin, or strategic fit):
+      "¿cuál vende más?", "¿cuál convierte mejor?", "¿cuál nos conviene promocionar?",
+      "¿cuál deja más margen?", "¿en qué producto me conviene enfocarme?"
 
 If uncertain, always choose NONE — a missed strategic question still gets a normal answer from the
 other system; a wrongly-classified operational question would not.
