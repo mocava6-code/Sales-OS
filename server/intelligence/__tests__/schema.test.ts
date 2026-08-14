@@ -114,6 +114,33 @@ describe("conversationIntelligenceResultSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  // Regression coverage for a second real production failure (same shape as
+  // the reasoning:null one, different mechanism): Groq populated
+  // compatibility with the literal string "UNKNOWN" and no evidence — a
+  // real, confirmed ProviderResultSchemaError issue: {"code":"custom",
+  // "path":["inferences","compatibility","evidence"],"message":"A populated
+  // inference must carry at least one evidence entry."}. "UNKNOWN" is a
+  // real enum member, not equivalent to null, so it's correctly held to the
+  // same grounding invariant as any other populated value — the fix is
+  // prompt-only (kori-conversation-analysis-prompt.ts now tells the model
+  // to emit null, not "UNKNOWN", when no knowledge snippet exists); the
+  // schema's own behavior here is unchanged and must stay this strict.
+  it("still rejects compatibility: 'UNKNOWN' with no evidence — the grounding invariant applies to every populated value, including UNKNOWN", () => {
+    const result = buildValidResult();
+    result.inferences.compatibility = { kind: "inference", value: "UNKNOWN", confidence: 0, evidence: [] };
+
+    const parsed = conversationIntelligenceResultSchema.safeParse(result);
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts compatibility: null with no evidence — the correct way to represent 'no knowledge snippet available'", () => {
+    const result = buildValidResult();
+    result.inferences.compatibility = { kind: "inference", value: null, confidence: 0, evidence: [] };
+
+    const parsed = conversationIntelligenceResultSchema.safeParse(result);
+    expect(parsed.success).toBe(true);
+  });
+
   it("rejects confidence outside 0-1", () => {
     const result = buildValidResult();
     result.facts.vehicleYear.confidence = 1.5;

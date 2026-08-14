@@ -4,6 +4,7 @@ import { analyzeConversation } from "../analyze-conversation";
 import { makeDecisions } from "../decision/make-decisions";
 import type { KoriDecisionContext } from "../decision/types";
 import { MalformedProviderOutputError, ModelProviderError } from "../errors";
+import { KORI_CONVERSATION_ANALYSIS_PROMPT_VERSION } from "../prompts/kori-conversation-analysis-prompt";
 import { AnthropicEmptyResponseError, AnthropicProviderError, createAnthropicAIProvider } from "../providers/anthropic-ai-provider";
 import { createMockAIProvider } from "../testing/mock-ai-provider";
 import type { ConversationIntelligenceInput, NormalizedMessage } from "../types";
@@ -180,7 +181,7 @@ describe("createAnthropicAIProvider — end to end through analyzeConversation",
 
     const result = await analyzeConversation(baseInput, { aiProvider: provider });
 
-    expect(result.metadata.promptVersion).toBe("kori-conversation-analysis-v1");
+    expect(result.metadata.promptVersion).toBe(KORI_CONVERSATION_ANALYSIS_PROMPT_VERSION);
   });
 
   it("12. the adapter's exported provider satisfies AIProvider with no extra Anthropic-shaped surface", async () => {
