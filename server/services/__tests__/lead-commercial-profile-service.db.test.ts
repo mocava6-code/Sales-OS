@@ -330,4 +330,46 @@ describe.skipIf(!shouldRunDbTests)("lead-commercial-profile-service (RUN_DB_TEST
     expect(result.updated).toBe(true);
     expect(profile?.vehicleModel).toBe("Ranger");
   });
+
+  it("Part 7 — a canonical fact established early in a long conversation survives even after its raw message has fallen out of the AI's bounded context window", async () => {
+    // The vehicle mention is the very FIRST message; many filler messages
+    // follow so the AI's bounded window (analyze-conversation-input.ts,
+    // MAX_ENGINE_INPUT_TRANSCRIPT_CHARS ≈ 12,000 chars) would no longer
+    // include it by the time this test runs projectLeadCommercialProfile.
+    await db!.conversationEntry.create({
+      data: { conversationId: fixture.conversationId, direction: "INBOUND", content: "Hola, tengo una Toyota Hilux 2022 y quiero un kit", occurredAt: new Date("2026-08-01T00:00:00Z") },
+    });
+    const fillerCount = 80;
+    const baseTime = new Date("2026-08-01T00:00:00Z").getTime();
+    await db!.conversationEntry.createMany({
+      data: Array.from({ length: fillerCount }, (_, i) => ({
+        conversationId: fixture.conversationId,
+        direction: i % 2 === 0 ? ("INBOUND" as const) : ("OUTBOUND" as const),
+        content: `mensaje de relleno numero ${i} sin contenido comercial relevante para esta prueba`.padEnd(200, "."),
+        occurredAt: new Date(baseTime + (i + 1) * 60_000),
+      })),
+    });
+
+    // Confirm the premise: the AI's bounded window genuinely no longer
+    // contains the original vehicle-mention message.
+    const conversation = await db!.conversation.findUniqueOrThrow({
+      where: { id: fixture.conversationId },
+      include: { entries: { orderBy: { occurredAt: "asc" } } },
+    });
+    const { buildEngineInputFromConversation } = await import("../../application/analyze-conversation-input");
+    const engineInput = buildEngineInputFromConversation(fixture.businessId, conversation);
+    expect(engineInput.messages!.some((m) => m.content.includes("Hilux"))).toBe(false);
+
+    // Tier 3 (deterministic, unbounded, free — server/intelligence/
+    // lead-commercial-state/**) still scans the FULL history regardless of
+    // what the AI's own bounded window would see.
+    const result = await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+    expect(result).toEqual({ created: true, updated: false, skipped: false });
+
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
+    expect(profile?.vehicleBrand).toBe("Toyota");
+    expect(profile?.vehicleModel).toBe("Hilux");
+    expect(profile?.vehicleYear).toBe(2022);
+    expect((profile?.provenance as never as { vehicleModel: { source: string } }).vehicleModel.source).toBe("LEAD_COMMERCIAL_STATE");
+  });
 });
