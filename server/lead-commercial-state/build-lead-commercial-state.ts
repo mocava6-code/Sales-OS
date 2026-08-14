@@ -16,6 +16,7 @@ import {
   vehicleModelExtractor,
   vehicleYearExtractor,
 } from "../intelligence/lead-commercial-state/extractors/freetext-product-extractor";
+import { customerTypeExtractor } from "../intelligence/lead-commercial-state/extractors/customer-type-extractor";
 import { deliveryLocationExtractor } from "../intelligence/lead-commercial-state/extractors/location-extractor";
 import { paymentStatusExtractor } from "../intelligence/lead-commercial-state/extractors/payment-extractor";
 import { createRequestedDeliveryAtExtractor } from "../intelligence/lead-commercial-state/extractors/relative-date-extractor";
@@ -57,6 +58,7 @@ function buildDefaultDependencies(businessTimezone: string): LeadCommercialState
     locationExtractors: [deliveryLocationExtractor],
     dateExtractors: [createRequestedDeliveryAtExtractor(businessTimezone)],
     paymentExtractors: [paymentStatusExtractor],
+    customerTypeExtractors: [customerTypeExtractor],
   };
 }
 

@@ -232,6 +232,78 @@ describe.skipIf(!shouldRunDbTests)("lead-commercial-profile-service (RUN_DB_TEST
     expect((profile?.provenance as never as { vehicleBrand: { source: string } }).vehicleBrand.source).toBe("LEAD_COMMERCIAL_STATE");
   });
 
+  it("the exact real production regression case: a customer's direct 'Cliente final' answer populates customerType via tier 3, with no AI/ConversationSnapshot involved", async () => {
+    // Reproduces the real Koriaki conversation verbatim: advisor asks the
+    // routine qualifying question, customer answers directly. No
+    // ConversationSnapshot exists (matches production: the AI pipeline has
+    // never once succeeded for this tenant) — this is the exact gap
+    // reported ("100% de tus clientes no tienen este dato" for customerType)
+    // even though vehicleBrand/Model/Year already worked via tier 3.
+    await db!.conversationEntry.createMany({
+      data: [
+        {
+          conversationId: fixture.conversationId,
+          direction: "OUTBOUND",
+          content: "¡Hola! ¿Que tal? Le saluda Maria Chaca asesora de Koriaki Import 😊\n¿Coménteme es cliente final o distribuidor?",
+          occurredAt: new Date("2026-08-11T18:46:00Z"),
+        },
+        {
+          conversationId: fixture.conversationId,
+          direction: "INBOUND",
+          content: "Cliente final",
+          occurredAt: new Date("2026-08-11T18:47:00Z"),
+        },
+        {
+          conversationId: fixture.conversationId,
+          direction: "INBOUND",
+          content: "Alex sulca illaconza\n42018952\nAyacucho huamanga\n988882112",
+          occurredAt: new Date("2026-08-11T19:09:49Z"),
+        },
+        {
+          conversationId: fixture.conversationId,
+          direction: "INBOUND",
+          content: "Tengo una Ford Ranger 2017",
+          occurredAt: new Date("2026-08-11T19:10:00Z"),
+        },
+      ],
+    });
+
+    const snapshotCountBefore = await db!.conversationSnapshot.count({ where: { conversationId: fixture.conversationId } });
+    expect(snapshotCountBefore).toBe(0);
+
+    const result = await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+    expect(result).toEqual({ created: true, updated: false, skipped: false });
+
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
+    expect(profile?.customerType).toBe("RETAIL");
+    expect(profile?.vehicleBrand).toBe("Ford");
+    expect(profile?.vehicleModel).toBe("Ranger");
+    expect(profile?.vehicleYear).toBe(2017);
+    const provenance = profile?.provenance as never as { customerType: { source: string } };
+    expect(provenance.customerType.source).toBe("LEAD_COMMERCIAL_STATE");
+    // No sale outcome / decision fabricated — this engine has no concept
+    // of one, and none was requested.
+    expect(profile?.primaryObjection).toBeNull();
+  });
+
+  it("customerType: AI-derived tier 2 wins outright over the deterministic tier-3 candidate when both exist — same precedence as every other overlapping field", async () => {
+    await createSnapshot(db!, fixture, { inferences: { customerType: inference("WHOLESALE", 0.8) } });
+    await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+
+    // A deterministic RETAIL signal arrives later — must not overwrite the
+    // higher-precedence AI value already stored.
+    await db!.conversationEntry.create({
+      data: { conversationId: fixture.conversationId, direction: "INBOUND", content: "Cliente final", occurredAt: new Date() },
+    });
+
+    const result = await projectLeadCommercialProfile(fixture.businessId, fixture.leadId, db!);
+
+    const profile = await db!.leadCommercialProfile.findUnique({ where: { leadId: fixture.leadId } });
+    expect(profile?.customerType).toBe("WHOLESALE");
+    expect((profile?.provenance as never as { customerType: { source: string } }).customerType.source).toBe("CONVERSATION_SNAPSHOT");
+    expect(result.updated).toBe(false); // the only candidate this run was rejected — no real change
+  });
+
   it("Kori Data Correctness Phase 1C — deterministic vehicleBrand NEVER overwrites a higher-confidence AI-derived vehicleBrand already stored", async () => {
     // A higher-confidence AI snapshot already set vehicleBrand — same
     // precedence mechanism proven generically above for the pre-existing

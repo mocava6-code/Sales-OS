@@ -23,6 +23,7 @@ export function toLeadCommercialStateDTO(state: LeadCommercialState): LeadCommer
     deliveryLocation: toFieldDisplayDTO(state.deliveryLocation, identity),
     requestedDeliveryAt: toFieldDisplayDTO(state.requestedDeliveryAt, toIso),
     paymentStatus: toFieldDisplayDTO(state.paymentStatus, identity),
+    customerType: toFieldDisplayDTO(state.customerType, identity),
     lastContactAt: (state.lastContactAt.value as Date).toISOString(),
     lastContactDirection: state.lastContactDirection.value as "INBOUND" | "OUTBOUND",
     conversationState: state.conversationState.value as LeadCommercialStateDTO["conversationState"],

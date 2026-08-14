@@ -13,7 +13,7 @@
 // means it only wins when a deterministic pass found nothing at the
 // relevant precedence tier.
 
-import type { Evidence, Fact, Inference } from "../types";
+import type { CustomerType, Evidence, Fact, Inference } from "../types";
 
 export type PaymentStatus = "NOT_REQUESTED" | "AWAITING_PAYMENT" | "PAYMENT_CONFIRMED";
 
@@ -126,6 +126,8 @@ export interface LeadCommercialState {
   deliveryLocation: Fact<string>;
   requestedDeliveryAt: Fact<Date>;
   paymentStatus: Inference<PaymentStatus>;
+  /** Tier-3 deterministic fallback for a field previously 100% dependent on the AI pipeline — see extractors/customer-type-extractor.ts. Mutable, same fold rule as productInterest/vehicleModel: a durable customer trait, not a per-transaction one. */
+  customerType: Inference<CustomerType>;
   lastContactAt: Fact<Date>;
   lastContactDirection: Fact<"INBOUND" | "OUTBOUND">;
   conversationState: Fact<ConversationCommercialState>;

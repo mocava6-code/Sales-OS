@@ -178,7 +178,14 @@ export async function computeLeadCommercialProfileUpdate(
       buildTier2Candidate(snapshot.result.facts.productRequested, snapshot.id),
       buildTier3Candidate({ value: dto.productInterest.value, confidence: dto.productInterest.confidence, reasoning: dto.productInterest.reasoning }),
     );
-    apply("customerType", buildTier2Candidate(snapshot.result.inferences.customerType, snapshot.id), null);
+    apply(
+      "customerType",
+      buildTier2Candidate(snapshot.result.inferences.customerType, snapshot.id),
+      // Previously always null — see extractors/customer-type-extractor.ts.
+      // Same resolveField precedence as vehicleBrand/Model/Year: tier 2
+      // (AI) wins outright when present, tier 3 only fills a genuine gap.
+      buildTier3Candidate({ value: dto.customerType.value, confidence: dto.customerType.confidence, reasoning: dto.customerType.reasoning }),
+    );
 
     const primaryObjectionSignal = [...snapshot.result.objections].sort((a, b) => b.confidence - a.confidence)[0];
     apply(
@@ -189,7 +196,7 @@ export async function computeLeadCommercialProfileUpdate(
       null,
     );
   } else {
-    // No snapshot yet — tier 3 still contributes to all four overlapping fields.
+    // No snapshot yet — tier 3 still contributes to all five overlapping fields.
     apply(
       "vehicleBrand",
       null,
@@ -209,6 +216,11 @@ export async function computeLeadCommercialProfileUpdate(
       "productInterest",
       null,
       buildTier3Candidate({ value: dto.productInterest.value, confidence: dto.productInterest.confidence, reasoning: dto.productInterest.reasoning }),
+    );
+    apply(
+      "customerType",
+      null,
+      buildTier3Candidate({ value: dto.customerType.value, confidence: dto.customerType.confidence, reasoning: dto.customerType.reasoning }),
     );
   }
 

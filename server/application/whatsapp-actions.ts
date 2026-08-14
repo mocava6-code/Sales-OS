@@ -30,6 +30,10 @@ import type {
 import type { AIProvider } from "@/server/intelligence/ai-provider";
 import { type ImportDateOrder, parseWhatsAppExport } from "@/server/knowledge/whatsapp-import/parser";
 import { analyzeConversationAndCreateDecisions } from "@/server/orchestration/analyze-conversation-and-create-decisions";
+import {
+  projectLeadCommercialProfile,
+  type ProjectLeadCommercialProfileResult,
+} from "@/server/services/lead-commercial-profile-service";
 import { findOrCreateLeadByPhone } from "@/server/services/lead-service";
 import {
   importHistoricalEntriesIntoConversation,
@@ -324,6 +328,17 @@ export interface HistoricalImportSummary {
   duplicateCount: number;
   skippedUnparseableTimestampCount: number;
   analysisTriggered: boolean;
+  /**
+   * Historical import previously never called this at all — only the live
+   * webhook path (server/whatsapp/gateway.ts step 8) did, so an
+   * exclusively-imported lead's LeadCommercialProfile (customerType,
+   * vehicleBrand/Model/Year, productInterest) stayed empty forever, even
+   * though the deterministic tier-3 engine needs no AI and costs nothing.
+   * Deliberately NOT gated on input.runAnalysis/analysisTriggered — same
+   * reasoning as gateway.ts's own comment on this: deterministic extraction
+   * must keep working independent of the optional, paid AI pass.
+   */
+  profileProjected: boolean;
 }
 
 async function defaultRunHistoricalImportAnalysis(
@@ -357,6 +372,7 @@ export interface ImportHistoricalWhatsAppChatDependencies extends HistoricalImpo
     db: PrismaClient,
   ) => Promise<ImportHistoricalEntriesResult>;
   runAnalysis?: (businessId: string, conversationId: string, db: PrismaClient) => Promise<void>;
+  projectCommercialProfile?: (businessId: string, leadId: string, db: PrismaClient) => Promise<ProjectLeadCommercialProfileResult>;
 }
 
 export function importHistoricalWhatsAppChatHandler(
@@ -381,6 +397,7 @@ export function importHistoricalWhatsAppChatHandler(
     const findOrCreateLead = dependencies.findOrCreateLead ?? findOrCreateLeadByPhone;
     const importEntries = dependencies.importEntries ?? importHistoricalEntriesIntoConversation;
     const runAnalysis = dependencies.runAnalysis ?? ((businessId, conversationId, runDb) => defaultRunHistoricalImportAnalysis(businessId, conversationId, runDb, dependencies.aiProvider));
+    const projectCommercialProfile = dependencies.projectCommercialProfile ?? projectLeadCommercialProfile;
 
     if (parsed.needsParticipantResolution || !parsed.resolution.businessSenderLabel || parsed.participantLabels.length !== 2) {
       // Defense-in-depth — this handler never trusts that a prior preview
@@ -416,6 +433,23 @@ export function importHistoricalWhatsAppChatHandler(
       }
     }
 
+    // Deterministic (tier 3) — no AI, no cost, independent of
+    // input.runAnalysis/analysisTriggered. Only the live webhook path
+    // (gateway.ts step 8) ran this before; historical import never did, so
+    // an exclusively-imported lead's commercial profile (customerType,
+    // vehicleBrand/Model/Year, productInterest) stayed empty forever even
+    // when the conversation plainly contained the answer. Best-effort, same
+    // contract as the analysis step above — never undoes the import.
+    let profileProjected = false;
+    if (imported.createdCount > 0) {
+      try {
+        await projectCommercialProfile(user.businessId, lead.id, db);
+        profileProjected = true;
+      } catch (error) {
+        console.error(`[historical-import] commercial profile projection failed for lead ${lead.id}, import unaffected:`, error);
+      }
+    }
+
     return {
       leadId: lead.id,
       conversationId: imported.conversationId!,
@@ -424,6 +458,7 @@ export function importHistoricalWhatsAppChatHandler(
       duplicateCount: imported.duplicateCount,
       skippedUnparseableTimestampCount,
       analysisTriggered,
+      profileProjected,
     };
   });
 }

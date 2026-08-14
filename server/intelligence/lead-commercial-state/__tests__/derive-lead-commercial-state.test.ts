@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveLeadCommercialState, type LeadCommercialStateDependencies } from "../derive-lead-commercial-state";
+import { customerTypeExtractor } from "../extractors/customer-type-extractor";
 import { createRequestedDeliveryAtExtractor } from "../extractors/relative-date-extractor";
 import { productInterestExtractor, vehicleBrandExtractor, vehicleModelExtractor, vehicleYearExtractor } from "../extractors/freetext-product-extractor";
 import { deliveryLocationExtractor } from "../extractors/location-extractor";
@@ -17,6 +18,7 @@ function buildDependencies(): LeadCommercialStateDependencies {
     locationExtractors: [deliveryLocationExtractor],
     dateExtractors: [createRequestedDeliveryAtExtractor(LIMA)],
     paymentExtractors: [paymentStatusExtractor],
+    customerTypeExtractors: [customerTypeExtractor],
   };
 }
 

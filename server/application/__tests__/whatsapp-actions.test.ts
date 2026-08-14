@@ -611,6 +611,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
           capturedEntries = entries;
           return { conversationId: "conv-1", conversationCreated: true, createdCount: entries.length, duplicateCount: 0 };
         },
+        projectCommercialProfile: async () => ({ created: false, updated: false, skipped: true }),
       },
     );
     expect(result.ok).toBe(true);
@@ -635,6 +636,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
         runAnalysis: async () => {
           analysisCalled = true;
         },
+        projectCommercialProfile: async () => ({ created: false, updated: false, skipped: true }),
       },
     );
     expect(result.ok).toBe(true);
@@ -673,6 +675,7 @@ describe("importHistoricalWhatsAppChatHandler", () => {
         runAnalysis: async () => {
           analysisCalled = true;
         },
+        projectCommercialProfile: async () => ({ created: false, updated: false, skipped: true }),
       },
     );
     expect(result.ok).toBe(true);
@@ -691,12 +694,69 @@ describe("importHistoricalWhatsAppChatHandler", () => {
         runAnalysis: async () => {
           throw new Error("AI provider unavailable");
         },
+        projectCommercialProfile: async () => ({ created: false, updated: false, skipped: true }),
       },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.createdCount).toBe(3);
       expect(result.data.analysisTriggered).toBe(false);
+    }
+  });
+
+  it("projects the commercial profile whenever entries were created, independent of runAnalysis — deterministic, no AI needed", async () => {
+    let projectionCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(
+      { ...baseInput, runAnalysis: false },
+      {
+        resolver: createFakeAuthContextResolver(owner),
+        db: fakeDb(),
+        findOrCreateLead: async () => ({ id: "lead-1" }),
+        importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
+        projectCommercialProfile: async (businessId, leadId) => {
+          projectionCalled = true;
+          expect(businessId).toBe(owner.businessId);
+          expect(leadId).toBe("lead-1");
+          return { created: true, updated: false, skipped: false };
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.profileProjected).toBe(true);
+    expect(projectionCalled).toBe(true);
+  });
+
+  it("skips commercial profile projection when the import was a full no-op (createdCount 0)", async () => {
+    let projectionCalled = false;
+    const result = await importHistoricalWhatsAppChatHandler(baseInput, {
+      resolver: createFakeAuthContextResolver(owner),
+      db: fakeDb(),
+      findOrCreateLead: async () => ({ id: "lead-1" }),
+      importEntries: async () => ({ conversationId: "conv-1", conversationCreated: false, createdCount: 0, duplicateCount: 3 }),
+      projectCommercialProfile: async () => {
+        projectionCalled = true;
+        return { created: false, updated: false, skipped: true };
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.profileProjected).toBe(false);
+    expect(projectionCalled).toBe(false);
+  });
+
+  it("marks the import successful (profileProjected: false) when projection throws, without undoing the import", async () => {
+    const result = await importHistoricalWhatsAppChatHandler(baseInput, {
+      resolver: createFakeAuthContextResolver(owner),
+      db: fakeDb(),
+      findOrCreateLead: async () => ({ id: "lead-1" }),
+      importEntries: async () => ({ conversationId: "conv-1", conversationCreated: true, createdCount: 3, duplicateCount: 0 }),
+      projectCommercialProfile: async () => {
+        throw new Error("db unavailable");
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.createdCount).toBe(3);
+      expect(result.data.profileProjected).toBe(false);
     }
   });
 });

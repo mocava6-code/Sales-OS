@@ -13,6 +13,7 @@ function workedExampleState(): LeadCommercialStateDTO {
     deliveryLocation: { value: "Chaclacayo", confidence: 0.85, evidenceExcerpt: "hace envíos a chaclacayo?", reasoning: "Matched against a known Peru district/city gazetteer." },
     requestedDeliveryAt: { value: "2026-07-25T17:00:00.000Z", confidence: 0.75, evidenceExcerpt: "para manana a las 12", reasoning: null },
     paymentStatus: { value: "AWAITING_PAYMENT", confidence: 0.85, evidenceExcerpt: "ok aqui le paso el numero de cuenta para que realice el pago", reasoning: null },
+    customerType: { value: null, confidence: 0, evidenceExcerpt: null, reasoning: null },
     lastContactAt: "2026-07-24T14:25:00.000Z",
     lastContactDirection: "OUTBOUND",
     conversationState: "WAITING_ON_CUSTOMER",

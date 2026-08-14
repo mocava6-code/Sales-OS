@@ -5,7 +5,7 @@
 // (the thin, Prisma-bound read model) is what loads the inputs this
 // function needs.
 
-import type { Evidence, Fact, Inference } from "../types";
+import type { CustomerType, Evidence, Fact, Inference } from "../types";
 import { resolveActiveConversation } from "./active-conversation";
 import { NoConversationsForLeadError } from "./errors";
 import { foldMutableFieldCandidates, foldTransientFieldCandidates } from "./fold-candidates";
@@ -34,6 +34,7 @@ export interface LeadCommercialStateDependencies {
   locationExtractors: FieldExtractor<string>[];
   dateExtractors: FieldExtractor<Date>[];
   paymentExtractors: FieldExtractor<PaymentStatus>[];
+  customerTypeExtractors: FieldExtractor<CustomerType>[];
   /** Overrides DEFAULT_SLA_HOURS_BY_NEXT_ACTION per action type; unset entries fall back to the default. */
   slaHoursByNextAction?: Partial<Record<NextActionType, number>>;
 }
@@ -57,6 +58,7 @@ function buildExtractorVersionMap(dependencies: LeadCommercialStateDependencies)
     ...dependencies.locationExtractors,
     ...dependencies.dateExtractors,
     ...dependencies.paymentExtractors,
+    ...dependencies.customerTypeExtractors,
   ];
   return Object.fromEntries(all.map((extractor) => [extractor.id, extractor.version]));
 }
@@ -88,6 +90,7 @@ export function deriveLeadCommercialState(
   const locationCandidates = dependencies.locationExtractors.flatMap((e) => e.extract(messages));
   const dateCandidates = dependencies.dateExtractors.flatMap((e) => e.extract(messages));
   const paymentCandidates = dependencies.paymentExtractors.flatMap((e) => e.extract(messages));
+  const customerTypeCandidates = dependencies.customerTypeExtractors.flatMap((e) => e.extract(messages));
 
   const commercialContextConversationId = resolveCommercialContextConversationId(
     [
@@ -98,6 +101,7 @@ export function deriveLeadCommercialState(
       ...locationCandidates,
       ...dateCandidates,
       ...paymentCandidates,
+      ...customerTypeCandidates,
     ],
     conversations,
     activeContext.activeConversationId,
@@ -113,6 +117,11 @@ export function deriveLeadCommercialState(
   // conversation historical fallback.
   const requestedDeliveryAt = toFact(foldTransientFieldCandidates(dateCandidates, commercialContextConversationId));
   const paymentStatus = toInference(foldTransientFieldCandidates(paymentCandidates, commercialContextConversationId));
+  // Mutable, not transient — a durable customer trait, same fold rule as
+  // productInterest/vehicleModel: an older, out-of-conversation answer is
+  // still valid enrichment, not a category error the way a stale payment
+  // request would be.
+  const customerType = toInference(foldMutableFieldCandidates(customerTypeCandidates, commercialContextConversationId));
 
   const nextActionResolution = resolveNextAction({
     paymentStatus,
@@ -146,6 +155,7 @@ export function deriveLeadCommercialState(
     deliveryLocation,
     requestedDeliveryAt,
     paymentStatus,
+    customerType,
     lastContactAt: conversationFacts.lastContactAt,
     lastContactDirection: conversationFacts.lastContactDirection,
     conversationState: conversationFacts.conversationState,

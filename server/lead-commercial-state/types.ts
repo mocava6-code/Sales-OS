@@ -3,6 +3,7 @@
 // ISO date strings, nothing Prisma-shaped, built server-side from the
 // authoritative engine result.
 
+import type { CustomerType } from "../intelligence/types";
 import type { ConversationCommercialState, NextActionType, PaymentStatus } from "../intelligence/lead-commercial-state/types";
 
 /**
@@ -29,6 +30,7 @@ export interface LeadCommercialStateDTO {
   /** ISO string when present. */
   requestedDeliveryAt: FieldDisplayDTO<string>;
   paymentStatus: FieldDisplayDTO<PaymentStatus>;
+  customerType: FieldDisplayDTO<CustomerType>;
   lastContactAt: string;
   lastContactDirection: "INBOUND" | "OUTBOUND";
   conversationState: ConversationCommercialState;
