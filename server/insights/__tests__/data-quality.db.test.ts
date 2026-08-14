@@ -4,7 +4,7 @@
 // tests — this file only proves the DB fetch is correctly scoped.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getDataQualityStats } from "../data-quality";
+import { getCustomerTypeCoverage, getDataQualityStats } from "../data-quality";
 import { cleanupTestFixture, createTestFixture, getTestPrisma, shouldRunDbTests, type TestFixture } from "../../persistence/__tests__/test-db";
 
 describe.skipIf(!shouldRunDbTests)("getDataQualityStats (RUN_DB_TESTS=true)", () => {
@@ -42,6 +42,60 @@ describe.skipIf(!shouldRunDbTests)("getDataQualityStats (RUN_DB_TESTS=true)", ()
       const stats = await getDataQualityStats(fixture.businessId, db!);
 
       expect(stats.every((s) => s.totalCount === 1)).toBe(true);
+    } finally {
+      await cleanupTestFixture(db!, otherFixture);
+    }
+  });
+});
+
+describe.skipIf(!shouldRunDbTests)("getCustomerTypeCoverage (RUN_DB_TESTS=true)", () => {
+  const db = shouldRunDbTests ? getTestPrisma() : undefined;
+  let fixture: TestFixture;
+
+  beforeEach(async () => {
+    fixture = await createTestFixture(db!, "customer-type-coverage");
+  });
+
+  afterEach(async () => {
+    await cleanupTestFixture(db!, fixture);
+  });
+
+  it("reads real provenance JSON and classifies via the same rule as classifyCustomerType", async () => {
+    await db!.leadCommercialProfile.create({
+      data: {
+        leadId: fixture.leadId,
+        businessId: fixture.businessId,
+        customerType: "RETAIL",
+        provenance: { customerType: { source: "LEAD_COMMERCIAL_STATE", confidence: 0.9, snapshotId: null, updatedAt: new Date().toISOString() } },
+      },
+    });
+
+    const coverage = await getCustomerTypeCoverage(fixture.businessId, db!);
+
+    expect(coverage).toEqual({ totalCount: 1, confirmedCount: 1, inferredRetailCount: 0, inferredWholesaleCount: 0, insufficientEvidenceCount: 0 });
+  });
+
+  it("counts a lead with no commercialProfile row as insufficient evidence", async () => {
+    const coverage = await getCustomerTypeCoverage(fixture.businessId, db!);
+    expect(coverage).toEqual({ totalCount: 1, confirmedCount: 0, inferredRetailCount: 0, inferredWholesaleCount: 0, insufficientEvidenceCount: 1 });
+  });
+
+  it("scopes the count to the requesting business only (tenant isolation)", async () => {
+    const otherFixture = await createTestFixture(db!, "customer-type-coverage-other");
+    try {
+      await db!.leadCommercialProfile.create({
+        data: {
+          leadId: otherFixture.leadId,
+          businessId: otherFixture.businessId,
+          customerType: "WHOLESALE",
+          provenance: { customerType: { source: "LEAD_COMMERCIAL_STATE", confidence: 0.9, snapshotId: null, updatedAt: new Date().toISOString() } },
+        },
+      });
+
+      const coverage = await getCustomerTypeCoverage(fixture.businessId, db!);
+
+      expect(coverage.totalCount).toBe(1);
+      expect(coverage.confirmedCount).toBe(0);
     } finally {
       await cleanupTestFixture(db!, otherFixture);
     }

@@ -3,7 +3,7 @@ import { buildExecutiveSummary, deriveDataQualityCard, deriveInsightCards, deriv
 import type { KoriNeedsOutcomeNudge } from "../kori-briefing-service";
 import type { ProductPerformance, ProductPerformanceSummary } from "@/server/insights/product-performance";
 import type { LossAnalysis } from "@/server/insights/loss-analysis";
-import type { DataQualityField, DataQualityStat } from "@/server/insights/data-quality";
+import type { CustomerTypeCoverage, DataQualityField, DataQualityStat } from "@/server/insights/data-quality";
 
 function nudge(overrides: Partial<KoriNeedsOutcomeNudge> = {}): KoriNeedsOutcomeNudge {
   return { leadId: "lead-1", leadName: "Cliente", vehicleLine: "Ranger Raptor", reasonCode: "BUYING_SIGNAL", waitingSince: new Date("2026-08-01T00:00:00.000Z"), ...overrides };
@@ -24,6 +24,10 @@ function lossAnalysis(overrides: Partial<LossAnalysis> = {}): LossAnalysis {
 function dataQualityStats(overrides: Partial<Record<DataQualityField, Partial<DataQualityStat>>> = {}): DataQualityStat[] {
   const fields: DataQualityField[] = ["customerType", "vehicleBrand", "productInterest"];
   return fields.map((field) => ({ field, missingCount: 0, totalCount: 10, missingPercentage: 0, ...overrides[field] }));
+}
+
+function customerTypeCoverage(overrides: Partial<CustomerTypeCoverage> = {}): CustomerTypeCoverage {
+  return { totalCount: 10, confirmedCount: 0, inferredRetailCount: 0, inferredWholesaleCount: 0, insufficientEvidenceCount: 10, ...overrides };
 }
 
 describe("deriveOpportunityCard", () => {
@@ -82,17 +86,54 @@ describe("deriveProblemCard", () => {
 });
 
 describe("deriveDataQualityCard", () => {
-  it("names the field with the highest missing percentage above the threshold", () => {
-    const card = deriveDataQualityCard(dataQualityStats({ customerType: { missingCount: 6, missingPercentage: 60 }, vehicleBrand: { missingCount: 5, missingPercentage: 50 } }));
-    expect(card).toEqual({ type: "DATO_FALTANTE", text: "Kori necesita más información sobre el tipo de cliente — 60% de tus clientes no tienen este dato." });
+  it("names the field with the highest missing percentage above the threshold — non-customerType fields keep the plain wording", () => {
+    const card = deriveDataQualityCard(
+      dataQualityStats({ vehicleBrand: { missingCount: 6, missingPercentage: 60 }, productInterest: { missingCount: 5, missingPercentage: 50 } }),
+      customerTypeCoverage(),
+    );
+    expect(card).toEqual({ type: "DATO_FALTANTE", text: "Kori necesita más información sobre la marca del vehículo — 60% de tus clientes no tienen este dato." });
   });
 
   it("returns null when no field clears the missing-percentage threshold", () => {
-    expect(deriveDataQualityCard(dataQualityStats({ customerType: { missingCount: 3, missingPercentage: 30 } }))).toBeNull();
+    expect(deriveDataQualityCard(dataQualityStats({ customerType: { missingCount: 3, missingPercentage: 30 } }), customerTypeCoverage())).toBeNull();
   });
 
   it("returns null when the business doesn't have enough leads to trust a percentage", () => {
-    expect(deriveDataQualityCard(dataQualityStats({ customerType: { totalCount: 2, missingCount: 2, missingPercentage: 100 } }))).toBeNull();
+    expect(deriveDataQualityCard(dataQualityStats({ customerType: { totalCount: 2, missingCount: 2, missingPercentage: 100 } }), customerTypeCoverage())).toBeNull();
+  });
+
+  it("customerType uses the richer Confirmado/Inferido/Sin evidencia breakdown, never the plain 'no tienen este dato' wording", () => {
+    const card = deriveDataQualityCard(
+      dataQualityStats({ customerType: { missingCount: 46, missingPercentage: 74 } }),
+      customerTypeCoverage({ totalCount: 62, confirmedCount: 15, inferredRetailCount: 0, inferredWholesaleCount: 0, insufficientEvidenceCount: 47 }),
+    );
+    expect(card?.type).toBe("DATO_FALTANTE");
+    expect(card?.text).toContain("Kori tiene el tipo de cliente confirmado en 24% de tus clientes.");
+    expect(card?.text).toContain("76% todavía no tienen evidencia suficiente.");
+    expect(card?.text).not.toContain("no tienen este dato");
+  });
+
+  it("customerType breakdown mentions inferred RETAIL/WHOLESALE splits only when at least one lead actually has that signal", () => {
+    const withInferred = deriveDataQualityCard(
+      dataQualityStats({ customerType: { missingPercentage: 50 } }),
+      customerTypeCoverage({ inferredRetailCount: 3, inferredWholesaleCount: 1, insufficientEvidenceCount: 6 }),
+    );
+    expect(withInferred?.text).toContain("muestran señales de ser cliente final");
+    expect(withInferred?.text).toContain("muestran señales de ser distribuidor o mayorista");
+
+    const withoutInferred = deriveDataQualityCard(
+      dataQualityStats({ customerType: { missingPercentage: 50 } }),
+      customerTypeCoverage({ inferredRetailCount: 0, inferredWholesaleCount: 0, insufficientEvidenceCount: 10 }),
+    );
+    expect(withoutInferred?.text).not.toContain("señales");
+  });
+
+  it("never presents an inferred count as confirmed — the confirmed percentage only ever reflects confirmedCount", () => {
+    const card = deriveDataQualityCard(
+      dataQualityStats({ customerType: { missingPercentage: 50 } }),
+      customerTypeCoverage({ totalCount: 10, confirmedCount: 2, inferredRetailCount: 5, insufficientEvidenceCount: 3 }),
+    );
+    expect(card?.text).toContain("confirmado en 20%");
   });
 });
 
@@ -103,12 +144,13 @@ describe("deriveInsightCards", () => {
       lossAnalysis({ responseTimeInsight: "Insight de pérdidas." }),
       [nudge(), nudge()],
       dataQualityStats({ customerType: { missingCount: 6, missingPercentage: 60 } }),
+      customerTypeCoverage({ insufficientEvidenceCount: 6 }),
     );
     expect(cards.map((c) => c.type)).toEqual(["OPORTUNIDAD", "TENDENCIA", "PROBLEMA", "DATO_FALTANTE"]);
   });
 
   it("returns an empty array when nothing clears any threshold", () => {
-    expect(deriveInsightCards(performanceSummary([]), lossAnalysis(), [], dataQualityStats())).toEqual([]);
+    expect(deriveInsightCards(performanceSummary([]), lossAnalysis(), [], dataQualityStats(), customerTypeCoverage())).toEqual([]);
   });
 });
 

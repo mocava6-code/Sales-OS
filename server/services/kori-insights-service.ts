@@ -14,7 +14,13 @@
 import { prisma } from "@/server/db/client";
 import { getProductPerformance, type ProductPerformance, type ProductPerformanceSummary } from "@/server/insights/product-performance";
 import { getLossAnalysis, type LossAnalysis } from "@/server/insights/loss-analysis";
-import { getDataQualityStats, type DataQualityField, type DataQualityStat } from "@/server/insights/data-quality";
+import {
+  getCustomerTypeCoverage,
+  getDataQualityStats,
+  type CustomerTypeCoverage,
+  type DataQualityField,
+  type DataQualityStat,
+} from "@/server/insights/data-quality";
 import type { KoriNeedsOutcomeNudge } from "./kori-briefing-service";
 
 const MIN_INTERESTED_FOR_TREND = 3;
@@ -84,12 +90,41 @@ export function deriveProblemCard(lossAnalysis: LossAnalysis): InsightCard | nul
   return { type: "PROBLEMA", text: lossAnalysis.responseTimeInsight };
 }
 
+function pctOf(count: number, total: number): number {
+  return total > 0 ? Math.round((count / total) * 100) : 0;
+}
+
+/**
+ * customerType specifically distinguishes Confirmado (a literal
+ * statement) from Inferido por Kori (a grounded but contextual AI
+ * judgment) — a distinction the other two data-quality fields don't have
+ * (see classifyCustomerType's own doc comment on why). Never claims an
+ * inferred value is confirmed; only mentions the RETAIL/WHOLESALE splits
+ * when at least one lead actually has that signal, so a business with no
+ * inferred leads yet never sees a hollow "0% muestran señales..." line.
+ */
+function buildCustomerTypeDataQualityText(coverage: CustomerTypeCoverage): string {
+  const parts = [`Kori tiene el tipo de cliente confirmado en ${pctOf(coverage.confirmedCount, coverage.totalCount)}% de tus clientes.`];
+  if (coverage.inferredRetailCount > 0) {
+    parts.push(`${pctOf(coverage.inferredRetailCount, coverage.totalCount)}% muestran señales de ser cliente final, según Kori.`);
+  }
+  if (coverage.inferredWholesaleCount > 0) {
+    parts.push(`${pctOf(coverage.inferredWholesaleCount, coverage.totalCount)}% muestran señales de ser distribuidor o mayorista, según Kori.`);
+  }
+  parts.push(`${pctOf(coverage.insufficientEvidenceCount, coverage.totalCount)}% todavía no tienen evidencia suficiente.`);
+  return parts.join(" ");
+}
+
 /** Fase D — Data Quality Loop. Names the single most-incomplete field, never fabricates a value, and stays silent below the sample/severity thresholds — a business with clean data never sees this card. */
-export function deriveDataQualityCard(stats: DataQualityStat[]): InsightCard | null {
+export function deriveDataQualityCard(stats: DataQualityStat[], customerTypeCoverage: CustomerTypeCoverage): InsightCard | null {
   const eligible = stats.filter((s) => s.totalCount >= MIN_LEADS_FOR_DATA_QUALITY_CARD && s.missingPercentage >= MIN_MISSING_PERCENT_FOR_DATA_QUALITY_CARD);
   if (eligible.length === 0) return null;
 
   const worst = [...eligible].sort((a, b) => b.missingPercentage - a.missingPercentage)[0];
+  if (worst.field === "customerType") {
+    return { type: "DATO_FALTANTE", text: buildCustomerTypeDataQualityText(customerTypeCoverage) };
+  }
+
   return {
     type: "DATO_FALTANTE",
     text: `Kori necesita más información sobre ${DATA_QUALITY_FIELD_LABELS[worst.field]} — ${worst.missingPercentage}% de tus clientes no tienen este dato.`,
@@ -101,8 +136,14 @@ export function deriveInsightCards(
   lossAnalysis: LossAnalysis,
   needsOutcomeNudges: KoriNeedsOutcomeNudge[],
   dataQualityStats: DataQualityStat[],
+  customerTypeCoverage: CustomerTypeCoverage,
 ): InsightCard[] {
-  return [deriveOpportunityCard(needsOutcomeNudges), deriveTrendCard(productPerformance), deriveProblemCard(lossAnalysis), deriveDataQualityCard(dataQualityStats)]
+  return [
+    deriveOpportunityCard(needsOutcomeNudges),
+    deriveTrendCard(productPerformance),
+    deriveProblemCard(lossAnalysis),
+    deriveDataQualityCard(dataQualityStats, customerTypeCoverage),
+  ]
     .filter((card): card is InsightCard => card !== null)
     .slice(0, MAX_INSIGHT_CARDS);
 }
@@ -138,16 +179,17 @@ export interface GetKoriInsightsContext {
 }
 
 export async function getKoriInsights(businessId: string, now: Date, context: GetKoriInsightsContext): Promise<KoriInsightsSummary> {
-  const [productPerformance, lossAnalysis, dataQualityStats, importedConversationsCount] = await Promise.all([
+  const [productPerformance, lossAnalysis, dataQualityStats, customerTypeCoverage, importedConversationsCount] = await Promise.all([
     getProductPerformance(businessId, now),
     getLossAnalysis(businessId, now),
     getDataQualityStats(businessId),
+    getCustomerTypeCoverage(businessId),
     prisma.importedConversation.count({ where: { businessId } }),
   ]);
 
   return {
     executiveSummary: buildExecutiveSummary(context.commercialConversations, productPerformance, lossAnalysis, context.needsOutcomeNudges.length),
-    cards: deriveInsightCards(productPerformance, lossAnalysis, context.needsOutcomeNudges, dataQualityStats),
+    cards: deriveInsightCards(productPerformance, lossAnalysis, context.needsOutcomeNudges, dataQualityStats, customerTypeCoverage),
     productPerformance: productPerformance.products.slice(0, MAX_PRODUCTS_DISPLAYED),
     periodDays: productPerformance.periodDays,
     showHistoricalImportNudge: importedConversationsCount === 0,
