@@ -52,7 +52,17 @@ export function inferenceSchema<T extends z.ZodTypeAny>(valueSchema: T) {
       value: valueSchema.nullable(),
       confidence: confidenceSchema,
       evidence: z.array(evidenceSchema),
-      reasoning: z.string().optional(),
+      // Groq (and, plausibly, any provider prompted with "reasoning:
+      // string?") commonly emits an explicit `null` for an inference it has
+      // nothing to add for, rather than omitting the key — confirmed by
+      // real production ProviderResultSchemaError issues, all of the shape
+      // "expected string, received null" at inferences.*.reasoning.
+      // .nullish() accepts a real string, an explicit null, or the key
+      // being entirely absent — the only three shapes a well-behaved
+      // provider can produce for an optional narrative field. Every other
+      // field's strictness (value/evidence/confidence, grounding refinement)
+      // is unchanged.
+      reasoning: z.string().nullish(),
     })
     .refine(isPopulatedWithEvidence, {
       message: "A populated inference must carry at least one evidence entry.",

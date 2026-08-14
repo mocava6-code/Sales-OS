@@ -7,6 +7,8 @@
 // prisma client), which this test deliberately never touches.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withAnalysisRunLock } from "../../application/analysis-run-lock";
+import { AnalysisInProgressError } from "../../application/errors";
 import { createMockAIProvider } from "../../intelligence/testing/mock-ai-provider";
 import { decisionProposal, minimalProviderResult } from "../../orchestration/__tests__/provider-fixtures";
 import { analyzeConversationAndCreateDecisions } from "../../orchestration/analyze-conversation-and-create-decisions";
@@ -52,6 +54,10 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
       const conversations = await db!.conversation.findMany({ where: { leadId: lead.id }, select: { id: true } });
       const conversationIds = conversations.map((c) => c.id);
       if (conversationIds.length > 0) {
+        // Safety net for a test that times out mid-run (e.g. the analysis
+        // concurrency test below) — withAnalysisRunLock's own `finally`
+        // normally releases this, but a timed-out test can abandon that.
+        await db!.conversationAnalysisRun.deleteMany({ where: { conversationId: { in: conversationIds } } });
         await db!.decisionEvent.deleteMany({ where: { decisionRecord: { conversationId: { in: conversationIds } } } });
         await db!.decisionRecord.deleteMany({ where: { conversationId: { in: conversationIds } } });
         await db!.conversationSnapshot.deleteMany({ where: { conversationId: { in: conversationIds } } });
@@ -201,6 +207,125 @@ describe.skipIf(!shouldRunDbTests)("WhatsAppGateway — real pipeline against sa
     const entries = await db!.conversationEntry.findMany({ where: { conversationId: first.conversationId! } });
     expect(entries).toHaveLength(2);
   });
+
+  it("Step 2 — never creates duplicate DecisionRecords when two inbound messages trigger overlapping analysis on the same conversation (real withAnalysisRunLock, real unique-constraint guard)", async () => {
+    // Mirrors defaultRunAnalysis's real production wiring (gateway.ts) —
+    // withAnalysisRunLock wrapping analyzeConversationAndCreateDecisions —
+    // but with a mocked AI provider and this suite's test db, same
+    // reasoning as makeRunAnalysis above (the real default always reaches
+    // for composition-root's singletons, which this suite never touches).
+    let releaseFirst!: () => void;
+    const firstIsRunning = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let raceCallCount = 0;
+
+    const lockedRunAnalysis = (input: Parameters<typeof analyzeConversationAndCreateDecisions>[0]) =>
+      withAnalysisRunLock(
+        input.businessId,
+        input.conversationId,
+        async () => {
+          raceCallCount += 1;
+          if (raceCallCount === 1) {
+            firstStarted();
+            await firstIsRunning; // block until the second attempt has raced in and failed
+          }
+          const mock = createMockAIProvider({
+            response: () => JSON.stringify(minimalProviderResult()),
+            decisionReasoningResponse: () => JSON.stringify({ decisions: [decisionProposal("Confirm compatibility")] }),
+          });
+          return analyzeConversationAndCreateDecisions(input, {
+            aiProvider: mock.provider,
+            transactionRunner: new PrismaTransactionRunner(db!),
+          });
+        },
+        db!,
+      );
+
+    // A separate, non-blocking gateway just to seed the lead+conversation —
+    // using the race gateway here too would make the seed message itself
+    // the "first" (blocking) lockedRunAnalysis call and deadlock before the
+    // race even starts. Both gateways share the same `db`/business/lead;
+    // which gateway instance issues a call doesn't matter to the underlying
+    // state, only which `runAnalysis` implementation it's wired to. Zero
+    // decisions here (unlike makeRunAnalysis's default fixture) so the
+    // seed's own real, independent analysis doesn't inflate the decision
+    // count this test is asserting on below.
+    const seedMock = createMockAIProvider({ response: () => JSON.stringify(minimalProviderResult()), decisionReasoningResponse: () => JSON.stringify({ decisions: [] }) });
+    const seedGateway = createWhatsAppGateway(
+      {
+        runAnalysis: (input) =>
+          withAnalysisRunLock(
+            input.businessId,
+            input.conversationId,
+            () => analyzeConversationAndCreateDecisions(input, { aiProvider: seedMock.provider, transactionRunner: new PrismaTransactionRunner(db!) }),
+            db!,
+          ),
+      },
+      db!,
+    );
+    const gateway = createWhatsAppGateway({ runAnalysis: lockedRunAnalysis }, db!);
+    const from = "16315556655";
+
+    // Establish the lead+conversation first (sequential — the conversation
+    // row itself isn't what this test is about).
+    const seed = await seedGateway.handleInboundMessage({
+      externalId: `wamid.LOCK-SEED-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      fromPhoneNumber: from,
+      messageType: "TEXT",
+      content: "Hola",
+      occurredAt: new Date(),
+      raw: {},
+    });
+
+    const firstMessage = gateway.handleInboundMessage({
+      externalId: `wamid.LOCK-A-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      fromPhoneNumber: from,
+      messageType: "TEXT",
+      content: "Tengo una Hilux 2022",
+      occurredAt: new Date(),
+      raw: {},
+    });
+
+    await firstStartedPromise; // first attempt now holds the lock
+
+    const secondMessage = await gateway.handleInboundMessage({
+      externalId: `wamid.LOCK-B-${Date.now()}`,
+      phoneNumberId: fixture.phoneNumberId,
+      fromPhoneNumber: from,
+      messageType: "TEXT",
+      content: "¿Cuánto cuesta?",
+      occurredAt: new Date(),
+      raw: {},
+    });
+
+    // The message itself is still persisted — only analysis was rejected.
+    expect(secondMessage.duplicate).toBe(false);
+    expect(secondMessage.analysisTriggered).toBe(false);
+    expect(secondMessage.analysisError).toBeInstanceOf(AnalysisInProgressError);
+
+    releaseFirst();
+    const firstResult = await firstMessage;
+    expect(firstResult.analysisTriggered).toBe(true);
+    expect(firstResult.analysisError).toBeUndefined();
+
+    // Exactly one successful analysis ran for this conversation — no
+    // duplicate DecisionRecord/ConversationSnapshot from the overlap.
+    const decisions = await db!.decisionRecord.findMany({ where: { conversationId: seed.conversationId! } });
+    expect(decisions).toHaveLength(1);
+    const snapshots = await db!.conversationSnapshot.findMany({ where: { conversationId: seed.conversationId! } });
+    expect(snapshots).toHaveLength(1);
+    expect(raceCallCount).toBe(1); // the lock rejected the second attempt before its work function ever ran
+
+    const runs = await db!.conversationAnalysisRun.findMany({ where: { conversationId: seed.conversationId! } });
+    expect(runs).toHaveLength(0); // released after completion
+  }, 15_000);
 
   it("14. resolves the lead's assigned advisor from the real Lead row", async () => {
     const gateway = createWhatsAppGateway({ runAnalysis: makeRunAnalysis(db!) }, db!);

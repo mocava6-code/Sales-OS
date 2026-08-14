@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { AnalysisInProgressError } from "@/server/application/errors";
 import { ModelProviderError, ProviderResultSchemaError } from "@/server/intelligence/errors";
-import { KoriNaturalLanguageParseError } from "@/server/kori/errors";
+import { KoriNaturalLanguageParseError, KoriProviderRateLimitedError } from "@/server/kori/errors";
 import { ConversationAnalysisFailedError } from "@/server/orchestration/errors";
 import { UnknownPhoneNumberError } from "../errors";
 import { createWhatsAppGateway, type WhatsAppGatewayDependencies, type WhatsAppPhoneNumberRecord } from "../gateway";
@@ -565,6 +566,45 @@ describe("WhatsAppGateway.handleInboundMessage — 8. Kori Natural Language Anal
 
       expect(logged).not.toHaveProperty("causes");
       expect(logged).not.toHaveProperty("issues");
+    });
+
+    it("classifies a Groq 429 distinctly via instanceof, not the (unreliable in production) sanitized code string", async () => {
+      const rateLimitCause = new KoriProviderRateLimitedError("Groq rate limit exceeded (429).", '{"error":{"message":"Rate limit reached..."}}');
+      const modelProviderError = new ModelProviderError('AI provider "groq" failed to complete the request.', rateLimitCause);
+      const wrapped = new ConversationAnalysisFailedError('Conversation Intelligence analysis failed for conversation "conv-1".', modelProviderError);
+
+      const { logged } = await triggerAnalysisFailure(wrapped);
+
+      expect(logged).toMatchObject({ rateLimited: true });
+    });
+
+    it("does not set rateLimited for an unrelated failure", async () => {
+      const { logged } = await triggerAnalysisFailure(new Error("some other failure"));
+
+      expect(logged).not.toHaveProperty("rateLimited");
+    });
+  });
+
+  describe("analysis concurrency guard (Step 2 — do not generate duplicate DecisionRecords)", () => {
+    it("a losing AnalysisInProgressError (from the real lock, on a concurrent duplicate) is handled exactly like any other best-effort analysis failure — never thrown, webhook ack unaffected", async () => {
+      const failingRunAnalysis = vi.fn(async () => {
+        throw new AnalysisInProgressError();
+      });
+      const { deps, store } = createFakeGatewayDeps({
+        phoneNumbers: [{ id: "wpn-1", businessId: "biz-1", phoneNumberId: "phone-number-id-1" }],
+        runAnalysisImpl: failingRunAnalysis,
+      });
+      const gateway = createWhatsAppGateway(deps);
+
+      const result = await gateway.handleInboundMessage(textMessage());
+
+      // Message persistence and the webhook's fast ack are unaffected —
+      // exactly the same contract as every other analysis failure mode.
+      expect(result.duplicate).toBe(false);
+      expect(result.entryId).toBeDefined();
+      expect(store.entries.size).toBe(1);
+      expect(result.analysisTriggered).toBe(false);
+      expect(result.analysisError).toBeInstanceOf(AnalysisInProgressError);
     });
   });
 });

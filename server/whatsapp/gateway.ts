@@ -4,9 +4,11 @@ import { prisma } from "@/server/db/client";
 import { Prisma } from "@/server/db/generated/client";
 import type { PrismaClient } from "@/server/db/generated/client";
 import type { AuthorizedConversation } from "@/server/application/access-control";
+import { withAnalysisRunLock } from "@/server/application/analysis-run-lock";
 import { buildEngineInputFromConversation } from "@/server/application/analyze-conversation-input";
 import { getAIProvider, getTransactionRunner } from "@/server/application/composition-root";
 import type { DomainEvent } from "@/server/domain-events/types";
+import { KoriProviderRateLimitedError } from "@/server/kori/errors";
 import { analyzeConversationAndCreateDecisions } from "@/server/orchestration/analyze-conversation-and-create-decisions";
 import { recordDomainEvent as recordDomainEventDefault } from "@/server/orchestration/record-domain-event";
 import type {
@@ -165,13 +167,28 @@ async function defaultLoadConversationForAnalysis(
   });
 }
 
+/**
+ * Same lock analyzeConversationHandler (server/application/decision-actions.ts,
+ * the manual "Analizar conversación" trigger) already uses — a
+ * ConversationAnalysisRun row's unique constraint on conversationId, so two
+ * overlapping analysis attempts for the same conversation (e.g. two inbound
+ * messages arriving close together, or a redelivered webhook) can never both
+ * reach the Decision Engine concurrently and create duplicate DecisionRecords.
+ * The webhook path had no such guard before — reusing this existing,
+ * already-tested infrastructure rather than building a new one.
+ * AnalysisInProgressError from a losing attempt is just another error this
+ * best-effort step catches and logs (see step 7 in handleInboundMessage) —
+ * no new error handling needed here.
+ */
 function defaultRunAnalysis(
   input: AnalyzeConversationAndCreateDecisionsInput,
 ): Promise<AnalyzeConversationAndCreateDecisionsResult> {
-  return analyzeConversationAndCreateDecisions(input, {
-    aiProvider: getAIProvider(),
-    transactionRunner: getTransactionRunner(),
-  });
+  return withAnalysisRunLock(input.businessId, input.conversationId, () =>
+    analyzeConversationAndCreateDecisions(input, {
+      aiProvider: getAIProvider(),
+      transactionRunner: getTransactionRunner(),
+    }),
+  );
 }
 
 async function defaultFindLatestEntry(conversationId: string, db: PrismaClient): Promise<PreviousEntryRecord | null> {
@@ -253,16 +270,29 @@ function sanitizeErrorForLogging(error: unknown): {
   causes?: SanitizedErrorInfo[];
   /** First Zod issue list found on the top-level error or anywhere in its cause chain. */
   issues?: string;
+  /**
+   * True if a Groq (or any provider) rate-limit error is anywhere in the
+   * chain — checked via `instanceof KoriProviderRateLimitedError` on the
+   * real objects, NOT by matching the sanitized `code` string: production
+   * has been observed logging an empty `error.name` for these same typed
+   * errors (a separate, unexplained issue — `.name` alone isn't reliable),
+   * while `instanceof` still works correctly since it checks the prototype
+   * chain, not the (possibly mangled) name string. Lets a 429 be alerted
+   * on/filtered separately from a real bug without depending on that.
+   */
+  rateLimited?: true;
 } {
   const top = sanitizeSingleError(error);
 
   const causes: SanitizedErrorInfo[] = [];
   let issues = sanitizeIssues(error);
+  let rateLimited: true | undefined = error instanceof KoriProviderRateLimitedError ? true : undefined;
   let current: unknown = error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
   let depth = 0;
   while (current !== undefined && current !== null && depth < MAX_CAUSE_CHAIN_DEPTH) {
     causes.push(sanitizeSingleError(current));
     issues ??= sanitizeIssues(current);
+    if (current instanceof KoriProviderRateLimitedError) rateLimited = true;
     current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
     depth += 1;
   }
@@ -270,6 +300,7 @@ function sanitizeErrorForLogging(error: unknown): {
   return {
     ...top,
     causes: causes.length > 0 ? causes : undefined,
+    rateLimited,
     issues,
   };
 }
@@ -292,7 +323,7 @@ function logPipelineStepFailure(
   // a conversation is resolved (step 3b, ahead of step 4).
   context: { businessId: string; leadId: string; conversationId?: string },
 ): void {
-  const { code, message, causes, issues } = sanitizeErrorForLogging(error);
+  const { code, message, causes, issues, rateLimited } = sanitizeErrorForLogging(error);
   console.error("[whatsapp gateway] pipeline step failed", {
     businessId: context.businessId,
     leadId: context.leadId,
@@ -302,6 +333,7 @@ function logPipelineStepFailure(
     errorMessage: message,
     ...(causes ? { causes } : {}),
     ...(issues ? { issues } : {}),
+    ...(rateLimited ? { rateLimited } : {}),
   });
 }
 

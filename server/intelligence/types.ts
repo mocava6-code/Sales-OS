@@ -35,7 +35,11 @@ export interface Inference<T> {
   value: T | null;
   confidence: number;
   evidence: Evidence[];
-  reasoning?: string;
+  // string when the provider gives a reason, null when it explicitly has
+  // none (a common, valid provider response — see schema.ts's inferenceSchema
+  // doc comment), or omitted entirely — all three are equivalent "no
+  // reasoning" states downstream.
+  reasoning?: string | null;
 }
 
 export interface CustomerIdentification {
