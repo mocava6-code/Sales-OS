@@ -965,6 +965,20 @@ enum ObservationType {
   CUSTOMER_GHOSTED
   PHOTO_REQUEST
   DISCOUNT_NEGOTIATION
+  // Business intelligence mission — intent + friction + geography signals,
+  // see server/intelligence/observation/types.ts's own doc comments.
+  QUOTE_REQUEST
+  AVAILABILITY_REQUEST
+  DELIVERY_TIME_REQUEST
+  PAYMENT_METHOD_REQUEST
+  PRICE_OBJECTION
+  AVAILABILITY_FRICTION
+  DELIVERY_LOCATION_FRICTION
+  INSTALLATION_FRICTION
+  TRUST_FRICTION
+  TIMING_FRICTION
+  LIMA_MENTIONED
+  PROVINCE_MENTIONED
 }
 
 // Read-only signal derived from a DomainEvent by the Observation Engine.

@@ -82,6 +82,9 @@ function buildLeadFilterConditions(
     if (filters.lastActivityAfter) lastEntryAt.gt = new Date(filters.lastActivityAfter);
     conversationsFilter.some = { ...conversationsFilter.some, lastEntryAt };
   }
+  if (filters.observationType) {
+    conversationsFilter.some = { ...conversationsFilter.some, observations: { some: { type: filters.observationType } } };
+  }
   if (Object.keys(conversationsFilter).length > 0) where.conversations = conversationsFilter;
 
   if ((options.includeOverdueFollowUpFilter ?? true) && filters.overdueFollowUp !== undefined) {

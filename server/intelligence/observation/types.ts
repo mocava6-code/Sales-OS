@@ -15,7 +15,31 @@ export type ObservationType =
   | "INSTALLATION_QUESTION"
   | "CUSTOMER_GHOSTED"
   | "PHOTO_REQUEST"
-  | "DISCOUNT_NEGOTIATION";
+  | "DISCOUNT_NEGOTIATION"
+  // Business intelligence mission — intent signals (see
+  // detectors/keyword-detectors.ts). Distinct from the AWAITING_PAYMENT/
+  // PAYMENT_CONFIRMED *state* server/intelligence/lead-commercial-state/
+  // extractors/payment-extractor.ts tracks — PAYMENT_METHOD_REQUEST is an
+  // *event* ("customer asked how to pay"), not a mutable current state.
+  | "QUOTE_REQUEST"
+  | "AVAILABILITY_REQUEST"
+  | "DELIVERY_TIME_REQUEST"
+  | "PAYMENT_METHOD_REQUEST"
+  // Friction signals — a customer expressing a specific obstacle, not
+  // merely asking a neutral question (contrast PRICE_REQUEST above with
+  // PRICE_OBJECTION here: "¿cuánto cuesta?" vs "está muy caro").
+  | "PRICE_OBJECTION"
+  | "AVAILABILITY_FRICTION"
+  | "DELIVERY_LOCATION_FRICTION"
+  | "INSTALLATION_FRICTION"
+  | "TRUST_FRICTION"
+  | "TIMING_FRICTION"
+  // Geography — coarse Lima-vs-provincia signal, distinct from
+  // server/intelligence/lead-commercial-state/extractors/location-extractor.ts's
+  // canonical deliveryLocation FACT (a specific place name) — this is a
+  // presence signal ("province came up"), not a resolved single value.
+  | "LIMA_MENTIONED"
+  | "PROVINCE_MENTIONED";
 
 export interface Observation {
   type: ObservationType;

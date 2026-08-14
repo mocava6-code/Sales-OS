@@ -66,6 +66,57 @@ describe("deriveObservations — keyword detectors", () => {
   });
 });
 
+describe("deriveObservations — business intelligence mission: intent signals", () => {
+  it.each([
+    ["QUOTE_REQUEST", "me puedes cotizar el kit completo?"],
+    ["AVAILABILITY_REQUEST", "tienen stock del kit?"],
+    ["DELIVERY_TIME_REQUEST", "en que tiempo lo hacen?"],
+    ["PAYMENT_METHOD_REQUEST", "como pago, tienen yape?"],
+  ])("detects %s", (type, content) => {
+    const observations = deriveObservations(messageReceived({ content }));
+    expect(observations.map((o) => o.type)).toContain(type);
+  });
+});
+
+describe("deriveObservations — business intelligence mission: friction signals", () => {
+  it.each([
+    ["PRICE_OBJECTION", "esta muy caro para mi"],
+    ["AVAILABILITY_FRICTION", "no hay stock del kit que quiero"],
+    ["DELIVERY_LOCATION_FRICTION", "no hacen envios a mi ciudad?"],
+    ["INSTALLATION_FRICTION", "no instalan en mi zona"],
+    ["TRUST_FRICTION", "es confiable esta tienda?"],
+    ["TIMING_FRICTION", "estan muy lento respondiendo"],
+  ])("detects %s", (type, content) => {
+    const observations = deriveObservations(messageReceived({ content }));
+    expect(observations.map((o) => o.type)).toContain(type);
+  });
+
+  it("distinguishes a neutral price question (PRICE_REQUEST) from an objection (PRICE_OBJECTION)", () => {
+    const neutral = deriveObservations(messageReceived({ content: "cuanto cuesta el kit?" }));
+    const objection = deriveObservations(messageReceived({ content: "esta muy caro" }));
+    expect(neutral.map((o) => o.type)).toContain("PRICE_REQUEST");
+    expect(neutral.map((o) => o.type)).not.toContain("PRICE_OBJECTION");
+    expect(objection.map((o) => o.type)).toContain("PRICE_OBJECTION");
+  });
+});
+
+describe("deriveObservations — business intelligence mission: geography signals", () => {
+  it("detects LIMA_MENTIONED for Lima and known Lima districts", () => {
+    expect(deriveObservations(messageReceived({ content: "vivo en Miraflores" })).map((o) => o.type)).toContain("LIMA_MENTIONED");
+  });
+
+  it("detects PROVINCE_MENTIONED for provincia and known regions outside Lima", () => {
+    expect(deriveObservations(messageReceived({ content: "le escribo desde Ayacucho" })).map((o) => o.type)).toContain("PROVINCE_MENTIONED");
+    expect(deriveObservations(messageReceived({ content: "hacen envios a provincia?" })).map((o) => o.type)).toContain("PROVINCE_MENTIONED");
+  });
+
+  it("does not cross-fire Lima and province for an unrelated message", () => {
+    const observations = deriveObservations(messageReceived({ content: "hola, buenos dias" }));
+    expect(observations.map((o) => o.type)).not.toContain("LIMA_MENTIONED");
+    expect(observations.map((o) => o.type)).not.toContain("PROVINCE_MENTIONED");
+  });
+});
+
 describe("deriveObservations — CUSTOMER_GHOSTED", () => {
   it("does not flag a prompt reply", () => {
     const event = messageReceived({

@@ -67,6 +67,33 @@ export const CUSTOMER_TYPE_FILTER_VALUES = ["RETAIL", "WHOLESALE"] as const;
 // maps to actionState=FOLLOW_UP_REQUIRED, not needsReply=true.
 export const ACTION_STATE_FILTER_VALUES = ["REPLY_REQUIRED", "FOLLOW_UP_REQUIRED", "WAITING_ON_CUSTOMER", "NO_ACTION_REQUIRED", "UNCERTAIN"] as const;
 
+// Business intelligence mission — filters "has any conversation with at
+// least one Observation of this type" (server/intelligence/observation/**,
+// server/db/schema.prisma's Observation model). Mirrors ObservationType
+// verbatim (same reasoning as the enums above: Prisma's generated enum
+// isn't directly zod-compatible). CUSTOMER_GHOSTED deliberately excluded —
+// it's a relationship-health signal, not a commercial-demand one, and
+// belongs to a different question shape than this filter answers.
+export const OBSERVATION_TYPE_FILTER_VALUES = [
+  "PRICE_REQUEST",
+  "COMPATIBILITY_QUESTION",
+  "INSTALLATION_QUESTION",
+  "PHOTO_REQUEST",
+  "DISCOUNT_NEGOTIATION",
+  "QUOTE_REQUEST",
+  "AVAILABILITY_REQUEST",
+  "DELIVERY_TIME_REQUEST",
+  "PAYMENT_METHOD_REQUEST",
+  "PRICE_OBJECTION",
+  "AVAILABILITY_FRICTION",
+  "DELIVERY_LOCATION_FRICTION",
+  "INSTALLATION_FRICTION",
+  "TRUST_FRICTION",
+  "TIMING_FRICTION",
+  "LIMA_MENTIONED",
+  "PROVINCE_MENTIONED",
+] as const;
+
 export const KORI_QUERY_DEFAULT_LIMIT = 25;
 export const KORI_QUERY_MAX_LIMIT = 100;
 
@@ -91,6 +118,8 @@ const koriQueryFiltersSchema = z
      */
     reasonCode: actionReasonCodeSchema.optional(),
     overdueFollowUp: z.boolean().optional(),
+    /** "has any conversation with at least one Observation of this type" — see OBSERVATION_TYPE_FILTER_VALUES's doc comment. */
+    observationType: z.enum(OBSERVATION_TYPE_FILTER_VALUES).optional(),
     leadStatus: z.enum(LEAD_STATUS_VALUES).optional(),
     priority: z.enum(LEAD_PRIORITY_VALUES).optional(),
     assignedAgentId: z.string().trim().min(1).optional(),

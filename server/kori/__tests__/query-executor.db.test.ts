@@ -89,6 +89,36 @@ async function addConversation(
   });
 }
 
+/** Business intelligence mission — Observation requires a real DomainEvent row (its FK), so this creates both together. */
+async function createObservation(
+  db: Db,
+  businessId: string,
+  conversationId: string,
+  type: string,
+  occurredAt: Date = new Date(),
+) {
+  const domainEvent = await db.domainEvent.create({
+    data: {
+      businessId,
+      conversationId,
+      eventType: "MESSAGE_RECEIVED",
+      payload: { type: "MESSAGE_RECEIVED" },
+      occurredAt,
+    },
+  });
+  return db.observation.create({
+    data: {
+      businessId,
+      conversationId,
+      domainEventId: domainEvent.id,
+      type: type as never,
+      summary: "test observation",
+      evidence: [],
+      occurredAt,
+    },
+  });
+}
+
 async function createOutcome(
   db: Db,
   fixtureLike: TestFixture,
@@ -111,6 +141,9 @@ async function cleanupBusiness(db: Db, businessId: string, userId: string) {
   await db.outcome.deleteMany({ where: { decisionRecord: { conversationId: { in: conversationIds } } } });
   await db.decisionEvent.deleteMany({ where: { decisionRecord: { conversationId: { in: conversationIds } } } });
   await db.decisionRecord.deleteMany({ where: { conversationId: { in: conversationIds } } });
+  // Observation references DomainEvent — deleted first even though both hang directly off the conversation.
+  await db.observation.deleteMany({ where: { conversationId: { in: conversationIds } } });
+  await db.domainEvent.deleteMany({ where: { conversationId: { in: conversationIds } } });
   await db.conversationEntry.deleteMany({ where: { conversationId: { in: conversationIds } } });
   await db.conversation.deleteMany({ where: { id: { in: conversationIds } } });
   await db.followUp.deleteMany({ where: { leadId: { in: leadIds } } });
@@ -369,6 +402,33 @@ describe.skipIf(!shouldRunDbTests)("executeKoriQuery (RUN_DB_TESTS=true)", () =>
     });
 
     expect(result).toEqual({ type: "count", count: 1 });
+  });
+
+  it("filters by observationType — business intelligence mission, e.g. '¿qué clientes pidieron cotización?'", async () => {
+    const { lead: quoteLead, conversation: quoteConversation } = await createLead(db!, fixture.businessId, fixture.userId, {
+      phone: "+10000000030",
+      conversation: {},
+    });
+    await createLead(db!, fixture.businessId, fixture.userId, { phone: "+10000000031", conversation: {} });
+    await createObservation(db!, fixture.businessId, quoteConversation!.id, "QUOTE_REQUEST");
+
+    const countResult = await executeKoriQuery({
+      businessId: fixture.businessId,
+      querySpec: { operation: "COUNT_LEADS", filters: { observationType: "QUOTE_REQUEST" } },
+      db: db!,
+    });
+    expect(countResult).toEqual({ type: "count", count: 1 });
+
+    const listResult = await executeKoriQuery({
+      businessId: fixture.businessId,
+      querySpec: { operation: "LIST_LEADS", filters: { observationType: "QUOTE_REQUEST" } },
+      db: db!,
+    });
+    if (listResult.type === "lead_list") {
+      expect(listResult.rows.map((r) => r.leadId)).toEqual([quoteLead.id]);
+    } else {
+      throw new Error("expected lead_list");
+    }
   });
 
   it("groups leads by vehicleBrand", async () => {

@@ -37,6 +37,15 @@ describe("parseKoriQuerySpec", () => {
     expect(() => parseKoriQuerySpec({ operation: "LIST_LEADS", filters: { reasonCode: "NOT_A_REAL_REASON" } })).toThrow(InvalidKoriQuerySpecError);
   });
 
+  it("accepts a valid observationType filter (business intelligence mission)", () => {
+    const spec = parseKoriQuerySpec({ operation: "COUNT_LEADS", filters: { observationType: "QUOTE_REQUEST" } });
+    expect(spec.filters?.observationType).toBe("QUOTE_REQUEST");
+  });
+
+  it("rejects an observationType value outside the bounded taxonomy (e.g. CUSTOMER_GHOSTED, deliberately excluded)", () => {
+    expect(() => parseKoriQuerySpec({ operation: "COUNT_LEADS", filters: { observationType: "CUSTOMER_GHOSTED" } })).toThrow(InvalidKoriQuerySpecError);
+  });
+
   it("rejects a smuggled businessId key at the top level", () => {
     expect(() => parseKoriQuerySpec({ operation: "COUNT_LEADS", businessId: "biz-1" })).toThrow(InvalidKoriQuerySpecError);
   });
