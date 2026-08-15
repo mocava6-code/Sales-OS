@@ -271,7 +271,7 @@ function validateObjections(objections: ObjectionSignal[], context: GroundingCon
 }
 
 function validateDraftResponse(
-  draftResponse: DraftResponse | null,
+  draftResponse: DraftResponse | null | undefined,
   context: GroundingContext,
   warnings: EngineWarning[],
 ): DraftResponse | null {

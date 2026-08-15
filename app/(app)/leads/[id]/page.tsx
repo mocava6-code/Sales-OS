@@ -11,6 +11,7 @@ import type { LeadCommercialStateDTO } from "@/server/lead-commercial-state/type
 import { formatDate, formatDateTime } from "@/lib/copy/format";
 import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
 import { RecordOutcomeSheet } from "@/components/outcomes/RecordOutcomeSheet";
+import { AnalyzeConversationButton } from "@/components/leads/AnalyzeConversationButton";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -64,7 +65,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       {lead.conversations.length > 0 && (
-        <RecordOutcomeSheet conversationId={lead.conversations[0].id} suggestedProduct={commercialState?.productInterest.value ?? null} />
+        <>
+          <RecordOutcomeSheet conversationId={lead.conversations[0].id} suggestedProduct={commercialState?.productInterest.value ?? null} />
+          <AnalyzeConversationButton conversationId={lead.conversations[0].id} />
+        </>
       )}
 
       {commercialState && <LeadCommercialStateCard state={commercialState} />}

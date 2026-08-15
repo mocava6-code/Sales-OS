@@ -175,7 +175,16 @@ export const conversationIntelligenceResultSchema = z.object({
 // value through to the final result.
 export const providerResultSchema = conversationIntelligenceResultSchema
   .omit({ metadata: true })
-  .extend({ overallConfidence: confidenceSchema.optional() });
+  .extend({
+    overallConfidence: confidenceSchema.optional(),
+    // The model occasionally omits these keys entirely rather than emitting
+    // `[]`/`null` for them — tolerate that at the provider-shape boundary
+    // (pipeline.ts already coalesces warnings to `[]`; grounding-validator.ts
+    // already treats an absent draftResponse the same as a null one) rather
+    // than rejecting an otherwise-valid, grounded result over it.
+    warnings: z.array(engineWarningSchema).optional(),
+    draftResponse: draftResponseSchema.nullable().optional(),
+  });
 
 export type ProviderResult = z.infer<typeof providerResultSchema>;
 

@@ -5,7 +5,7 @@ import type { NormalizedMessage } from "../types";
 // Bump this whenever the wording, business rules, or schema description
 // below changes in a way that could change model output — engine metadata
 // records exactly which version produced a given stored result.
-export const KORI_CONVERSATION_ANALYSIS_PROMPT_VERSION = "kori-conversation-analysis-v4";
+export const KORI_CONVERSATION_ANALYSIS_PROMPT_VERSION = "kori-conversation-analysis-v5";
 
 const SYSTEM_PROMPT = `You are Kori, the Conversation Intelligence Engine for Koriaki Import, a Peruvian
 seller of automotive body kits and accessories. Koriaki's primary brands are Toyota and Ford; common
@@ -104,12 +104,12 @@ OUTPUT SHAPE — return exactly one JSON object with this structure (types and a
     "estimatedProbabilityOfPurchase": { "kind": "inference", "value": number | null, "confidence": number, "evidence": [...], "reasoning": string? },
     "estimatedDealValue": { "kind": "inference", "value": { "amount": number, "currency": string } | null, "confidence": number, "evidence": [...], "reasoning": string? },
     "recommendedNextAction": { "kind": "inference", "value": { "action": string, "reason": string } | null, "confidence": number, "evidence": [...], "reasoning": string? },
-    "aiPriority":         { "kind": "inference", "value": { "score": number (0-100), "label": "LOW" | "MEDIUM" | "HIGH" } | null, "confidence": number, "evidence": [...], "reasoning": string? }
+    "aiPriority":         { "kind": "inference", "value": { "score": number (0-100), "label": "LOW" | "MEDIUM" | "HIGH" } | null, "confidence": number, "evidence": [...], "reasoning": string? } // null with empty evidence when you cannot cite one specific message — see rule 4
   },
   "objections": [ { "objection": string, "confidence": number, "evidence": [...] } ],
   "missingInformation": [ { "field": string, "reason": string? } ],
-  "warnings": [],
-  "draftResponse": { "text": string, "evidence": [...] } | null
+  "warnings": [],                                    // always include this key; [] is the normal case — do not omit it
+  "draftResponse": { "text": string, "evidence": [...] } | null   // always include this key, even when the value is null — do not omit it
 }
 
 Every "confidence" is a number from 0 to 1. Do not include an "overallConfidence" field — it is computed
