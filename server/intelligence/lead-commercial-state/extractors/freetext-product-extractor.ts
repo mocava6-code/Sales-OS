@@ -59,6 +59,14 @@ const COMMERCIAL_STATE_VEHICLE_MODELS: Record<string, string> = {
   // real-world model under either spelling.
   f150: "F150",
   "f 150": "F150",
+  // Added from a real-traffic sample of leads with no vehicleModel match —
+  // each is a distinctive enough token to add unconditionally (unlike
+  // "Escape"/"Colorado", deliberately NOT added below — both collide with
+  // common Spanish words, "escape" = exhaust pipe, "colorado" = "reddish",
+  // and would misclassify unrelated messages as a vehicle mention).
+  agya: "Agya",
+  np300: "NP300",
+  s10: "S10",
 };
 
 /**
@@ -77,6 +85,9 @@ export const KNOWN_VEHICLE_MODEL_TO_BRAND: Record<string, string> = {
   "Land Cruiser": "Toyota",
   Ranger: "Ford",
   F150: "Ford",
+  Agya: "Toyota",
+  NP300: "Nissan",
+  S10: "Chevrolet",
 };
 
 /** Tokens (already normalized — lowercase, no diacritics) whose presence identifies the message as being about a Ford vehicle — the context "Raptor" alone needs to resolve to Ford. */
@@ -108,10 +119,36 @@ export const PRODUCT_TYPE_KEYWORDS: Record<string, string> = {
   repuestos: "repuestos",
   accesorio: "accesorio",
   accesorios: "accesorios",
+  // Added from a real-traffic sample of leads with product signal the
+  // extractor was missing — all unambiguous automotive-parts terms in this
+  // business's actual conversations. Deliberately excludes "máscara" (front
+  // mask/grille cover) despite one real occurrence — it collides with the
+  // much more common generic senses of the word (face mask, costume mask,
+  // mascara makeup) and a wrong product-interest guess is worse than a
+  // missed one.
+  faro: "faro",
+  faros: "faros",
+  parachoque: "parachoque",
+  parachoques: "parachoques",
+  estribo: "estribo",
+  estribos: "estribos",
+  pisadera: "pisadera",
+  pisaderas: "pisaderas",
+  parrilla: "parrilla",
+  rejilla: "rejilla",
+  neblinero: "neblinero",
+  neblineros: "neblineros",
+  fender: "fender",
+  fenders: "fenders",
+  "tapa retractil": "tapa retráctil",
 };
 
 const YEAR_PATTERN = /^(19|20)\d{2}$/;
-const FREETEXT_EXTRACTOR_VERSION = "2.0.0";
+// v3: productInterest detection no longer requires a vehicle-model match in
+// the SAME message (see matchProduct's doc comment); also added vocabulary
+// (faros, parachoques, estribos, pisaderas, parrilla, rejilla, neblineros,
+// fenders, tapa retráctil; vehicle models Agya/NP300/S10).
+const FREETEXT_EXTRACTOR_VERSION = "3.0.0";
 const FREETEXT_CONFIDENCE = 0.6;
 const FREETEXT_REASONING = "Coincidencia de texto libre contra un vocabulario fijo de vehículos/productos — todavía no hay un catálogo de productos configurado.";
 
@@ -129,14 +166,13 @@ function findCanonicalMatch(tokenSet: Set<string>, dictionary: Record<string, st
   return null;
 }
 
-interface VehicleProductMatch {
+interface VehicleMatch {
   vehicleBrand: string | null;
   vehicleModel: string;
   vehicleYear: number | null;
-  productInterest: string | null;
 }
 
-function matchVehicleAndProduct(message: NormalizedMessageForExtraction): VehicleProductMatch | null {
+function matchVehicle(message: NormalizedMessageForExtraction): VehicleMatch | null {
   const tokens = tokenize(message.content);
   const tokenSet = new Set(tokens);
 
@@ -145,17 +181,35 @@ function matchVehicleAndProduct(message: NormalizedMessageForExtraction): Vehicl
 
   const vehicleBrand = resolveVehicleBrand(vehicleModel, tokenSet);
 
+  // A bare year is only trusted alongside a recognized vehicle mention in
+  // the same message — an unqualified 4-digit number elsewhere (a RUC
+  // fragment, a phone number, an address, "para mañana a las 2020") is too
+  // easy to misread as a model year.
   const yearToken = tokens.find((t) => YEAR_PATTERN.test(t)) ?? null;
   const vehicleYear = yearToken ? Number(yearToken) : null;
+
+  return { vehicleBrand, vehicleModel, vehicleYear };
+}
+
+/**
+ * Deliberately independent of matchVehicle — a customer stating "deseo un
+ * kit de conversion" or "tienes faros?" is real product-interest signal
+ * even when the same message doesn't also name a vehicle (the vehicle is
+ * very often stated in an earlier or later message instead). Previously
+ * this was gated behind a vehicle match in the SAME message, which meant
+ * plainly stated product interest went uncaptured whenever it was split
+ * across messages — the common case in real conversations, per a sample of
+ * leads with otherwise-obvious signal the extractor was missing entirely.
+ */
+function matchProduct(message: NormalizedMessageForExtraction): string | null {
+  const tokenSet = new Set(tokenize(message.content));
 
   const productLine = findCanonicalMatch(tokenSet, KNOWN_PRODUCT_LINES);
   const productType = findCanonicalMatch(tokenSet, PRODUCT_TYPE_KEYWORDS);
   // Either part alone is meaningful ("repuestos" with no named product
   // line is still a real productInterest) — not gated on productLine being
   // present first.
-  const productInterest = [productLine, productType].filter((part): part is string => Boolean(part)).join(" ") || null;
-
-  return { vehicleBrand, vehicleModel, vehicleYear, productInterest };
+  return [productLine, productType].filter((part): part is string => Boolean(part)).join(" ") || null;
 }
 
 function toCandidate<T>(value: T, message: NormalizedMessageForExtraction): FieldCandidate<T> {
@@ -174,7 +228,7 @@ export const vehicleModelExtractor: FieldExtractor<string> = {
   version: FREETEXT_EXTRACTOR_VERSION,
   extract(messages: NormalizedMessageForExtraction[]): FieldCandidate<string>[] {
     return messages.flatMap((message) => {
-      const match = matchVehicleAndProduct(message);
+      const match = matchVehicle(message);
       return match ? [toCandidate(match.vehicleModel, message)] : [];
     });
   },
@@ -185,7 +239,7 @@ export const vehicleBrandExtractor: FieldExtractor<string> = {
   version: FREETEXT_EXTRACTOR_VERSION,
   extract(messages: NormalizedMessageForExtraction[]): FieldCandidate<string>[] {
     return messages.flatMap((message) => {
-      const match = matchVehicleAndProduct(message);
+      const match = matchVehicle(message);
       return match?.vehicleBrand ? [toCandidate(match.vehicleBrand, message)] : [];
     });
   },
@@ -196,7 +250,7 @@ export const vehicleYearExtractor: FieldExtractor<number> = {
   version: FREETEXT_EXTRACTOR_VERSION,
   extract(messages: NormalizedMessageForExtraction[]): FieldCandidate<number>[] {
     return messages.flatMap((message) => {
-      const match = matchVehicleAndProduct(message);
+      const match = matchVehicle(message);
       return match?.vehicleYear !== null && match?.vehicleYear !== undefined ? [toCandidate(match.vehicleYear, message)] : [];
     });
   },
@@ -207,8 +261,8 @@ export const productInterestExtractor: FieldExtractor<string> = {
   version: FREETEXT_EXTRACTOR_VERSION,
   extract(messages: NormalizedMessageForExtraction[]): FieldCandidate<string>[] {
     return messages.flatMap((message) => {
-      const match = matchVehicleAndProduct(message);
-      return match?.productInterest ? [toCandidate(match.productInterest, message)] : [];
+      const productInterest = matchProduct(message);
+      return productInterest ? [toCandidate(productInterest, message)] : [];
     });
   },
 };

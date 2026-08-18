@@ -148,3 +148,76 @@ describe("freetext product/vehicle extractor — general behavior", () => {
     expect(productInterestExtractor.extract([message({ content: "tienen para hilux?" })])).toEqual([]);
   });
 });
+
+// Real production leads had product interest going uncaptured because the
+// customer's vehicle and the customer's product request landed in
+// different messages ("Deseo una cotización para un kit de conversion." —
+// the vehicle is mentioned earlier or later in the same conversation, not
+// in this message) — matchProduct must not require a vehicle mention.
+describe("freetext product/vehicle extractor — productInterest is independent of a vehicle mention in the same message", () => {
+  it("extracts productInterest from a message with no vehicle mention at all", () => {
+    const [candidate] = productInterestExtractor.extract([message({ content: "Deseo una cotización para un kit de conversion." })]);
+    expect(candidate.value).toBe("kit");
+  });
+
+  it("still extracts vehicleModel from a separate message with no product mention", () => {
+    const msgs = [message({ content: "Deseo una cotización para un kit de conversion." }), message({ content: "Es una fortuner 2024" })];
+    const [vehicleModel] = vehicleModelExtractor.extract(msgs);
+    const [vehicleYear] = vehicleYearExtractor.extract(msgs);
+    const [productInterest] = productInterestExtractor.extract(msgs);
+    expect(vehicleModel.value).toBe("Fortuner");
+    expect(vehicleYear.value).toBe(2024);
+    expect(productInterest.value).toBe("kit");
+  });
+
+  it("does not extract a vehicleYear from a productInterest-only message (year stays tied to a vehicle mention)", () => {
+    expect(vehicleYearExtractor.extract([message({ content: "Deseo una cotización para un kit de conversion." })])).toEqual([]);
+  });
+});
+
+describe("freetext product/vehicle extractor — new vehicle models (Agya, NP300, S10)", () => {
+  it("Agya -> Toyota", () => {
+    const [candidate] = vehicleBrandExtractor.extract([message({ content: "pisaderas para Toyota Agya 2026" })]);
+    expect(candidate.value).toBe("Toyota");
+  });
+
+  it("NP300 -> Nissan", () => {
+    const [candidate] = vehicleBrandExtractor.extract([message({ content: "faro posterior para nissan np300 2016" })]);
+    expect(candidate.value).toBe("Nissan");
+  });
+
+  it("S10 -> Chevrolet", () => {
+    const [candidate] = vehicleModelExtractor.extract([message({ content: "tengo una chevrolet s10 2024" })]);
+    expect(candidate.value).toBe("S10");
+  });
+});
+
+describe("freetext product/vehicle extractor — new accessory vocabulary", () => {
+  const accessoryCases: Array<[string, string]> = [
+    ["tienes faros delanteros?", "faros"],
+    ["el parachoque delantero está mal", "parachoque"],
+    ["cuanto por los estribos", "estribos"],
+    ["las pisaderas ya lo tengo", "pisaderas"],
+    ["precio de la parrilla", "parrilla"],
+    ["la rejilla nada mas", "rejilla"],
+    ["precio de los neblineros", "neblineros"],
+    ["son las pisaderas, los fenders y la rejilla", "pisaderas fenders rejilla"],
+  ];
+
+  it.each(accessoryCases)("%s -> productInterest includes %s", (content) => {
+    const candidates = productInterestExtractor.extract([message({ content })]);
+    expect(candidates.length).toBeGreaterThan(0);
+  });
+
+  it("does NOT match the ambiguous word 'máscara' — collides with face mask/costume/makeup senses", () => {
+    expect(productInterestExtractor.extract([message({ content: "necesito la máscara" })])).toEqual([]);
+  });
+
+  it("does NOT add 'Escape' as a vehicle model — collides with 'tubo de escape' (exhaust pipe)", () => {
+    expect(vehicleModelExtractor.extract([message({ content: "cambie el tubo de escape" })])).toEqual([]);
+  });
+
+  it("does NOT add 'Colorado' as a vehicle model — collides with the color adjective", () => {
+    expect(vehicleModelExtractor.extract([message({ content: "quiero uno colorado" })])).toEqual([]);
+  });
+});
