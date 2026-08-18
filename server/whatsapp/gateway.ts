@@ -6,7 +6,7 @@ import type { PrismaClient } from "@/server/db/generated/client";
 import type { AuthorizedConversation } from "@/server/application/access-control";
 import { withAnalysisRunLock } from "@/server/application/analysis-run-lock";
 import { buildEngineInputFromConversation } from "@/server/application/analyze-conversation-input";
-import { getAIProvider, getTransactionRunner } from "@/server/application/composition-root";
+import { getAIProvider, getKnowledgeSource, getTransactionRunner } from "@/server/application/composition-root";
 import type { DomainEvent } from "@/server/domain-events/types";
 import { KoriProviderRateLimitedError } from "@/server/kori/errors";
 import { analyzeConversationAndCreateDecisions } from "@/server/orchestration/analyze-conversation-and-create-decisions";
@@ -187,6 +187,7 @@ function defaultRunAnalysis(
     analyzeConversationAndCreateDecisions(input, {
       aiProvider: getAIProvider(),
       transactionRunner: getTransactionRunner(),
+      knowledgeSource: getKnowledgeSource(),
     }),
   );
 }

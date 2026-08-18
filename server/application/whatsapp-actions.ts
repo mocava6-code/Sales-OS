@@ -58,7 +58,7 @@ import {
 } from "./access-control";
 import { buildEngineInputFromConversation } from "./analyze-conversation-input";
 import { type AuthContextResolver, type AuthenticatedUser, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
-import { getAIProvider, getTransactionRunner } from "./composition-root";
+import { getAIProvider, getKnowledgeSource, getTransactionRunner } from "./composition-root";
 import { toPendingWhatsAppMessageSummaryDTO, toWhatsAppPhoneNumberDTO, type PendingWhatsAppMessageSummaryDTO, type WhatsAppPhoneNumberDTO } from "./dto";
 import { type ApplicationResult, ForbiddenError, InvalidInputError, toApplicationResult } from "./errors";
 
@@ -357,7 +357,7 @@ async function defaultRunHistoricalImportAnalysis(
   const engineInput = buildEngineInputFromConversation(businessId, conversation);
   await analyzeConversationAndCreateDecisions(
     { businessId, conversationId, conversationIntelligenceInput: engineInput },
-    { aiProvider: aiProvider ?? getAIProvider(), transactionRunner: getTransactionRunner() },
+    { aiProvider: aiProvider ?? getAIProvider(), transactionRunner: getTransactionRunner(), knowledgeSource: getKnowledgeSource() },
   );
 }
 

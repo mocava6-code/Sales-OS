@@ -1,11 +1,13 @@
 import "server-only";
 
 import type { AIProvider } from "@/server/intelligence/ai-provider";
+import type { KnowledgeSource } from "@/server/intelligence/knowledge-source";
 import { createAIRouterFromEnv } from "@/server/intelligence/provider-factory";
 import type { ObserverConsoleReadDependencies } from "@/server/observer-console/types";
 import { PrismaConversationEntryRepository } from "@/server/persistence/prisma/prisma-conversation-entry-repository";
 import { PrismaConversationSearchRepository } from "@/server/persistence/prisma/prisma-conversation-search-repository";
 import { PrismaDomainEventRepository } from "@/server/persistence/prisma/prisma-domain-event-repository";
+import { PrismaKnowledgeSource } from "@/server/persistence/prisma/prisma-knowledge-source";
 import { PrismaObservationRepository } from "@/server/persistence/prisma/prisma-observation-repository";
 import { PrismaTransactionRunner } from "@/server/persistence/prisma/prisma-transaction-runner";
 import type { TransactionRunner } from "@/server/persistence/unit-of-work";
@@ -20,10 +22,12 @@ import type { TransactionRunner } from "@/server/persistence/unit-of-work";
 export interface KoriApplicationDependencies {
   aiProvider: AIProvider;
   transactionRunner: TransactionRunner;
+  knowledgeSource: KnowledgeSource;
 }
 
 let cachedTransactionRunner: TransactionRunner | undefined;
 let cachedAIProvider: AIProvider | undefined;
+let cachedKnowledgeSource: KnowledgeSource | undefined;
 
 /**
  * The single composition root every server action gets its orchestration
@@ -64,8 +68,21 @@ export function tryGetAIProvider(): AIProvider | undefined {
   }
 }
 
+/**
+ * Retrieval-only over OWNER-approved KnowledgeItem rows (see
+ * PrismaKnowledgeSource's own doc comment) — always constructible, unlike
+ * getAIProvider(), since it needs no env/API key and a business with zero
+ * approved knowledge simply gets zero snippets back, never an error.
+ */
+export function getKnowledgeSource(): KnowledgeSource {
+  if (!cachedKnowledgeSource) {
+    cachedKnowledgeSource = new PrismaKnowledgeSource();
+  }
+  return cachedKnowledgeSource;
+}
+
 export function getKoriApplicationDependencies(): KoriApplicationDependencies {
-  return { aiProvider: getAIProvider(), transactionRunner: getTransactionRunner() };
+  return { aiProvider: getAIProvider(), transactionRunner: getTransactionRunner(), knowledgeSource: getKnowledgeSource() };
 }
 
 let cachedObserverConsoleReadDependencies: ObserverConsoleReadDependencies | undefined;

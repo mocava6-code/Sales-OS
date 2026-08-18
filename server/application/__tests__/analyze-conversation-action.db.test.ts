@@ -14,6 +14,7 @@ import {
   shouldRunDbTests,
   type TestFixture,
 } from "../../persistence/__tests__/test-db";
+import { PrismaKnowledgeSource } from "../../persistence/prisma/prisma-knowledge-source";
 import { PrismaTransactionRunner } from "../../persistence/prisma/prisma-transaction-runner";
 import { loadAuthorizedConversation } from "../access-control";
 import { withAnalysisRunLock } from "../analysis-run-lock";
@@ -62,6 +63,7 @@ describe.skipIf(!shouldRunDbTests)(
           resolver,
           aiProvider: mock.provider,
           transactionRunner: new PrismaTransactionRunner(db!),
+          knowledgeSource: new PrismaKnowledgeSource(db!),
           loadConversation: (user, conversationId) => loadAuthorizedConversation(user, conversationId, db!),
           runWithAnalysisLock: (businessId, conversationId, work) =>
             withAnalysisRunLock(businessId, conversationId, work, db!),
@@ -95,6 +97,7 @@ describe.skipIf(!shouldRunDbTests)(
           resolver,
           aiProvider: mock.provider,
           transactionRunner: new PrismaTransactionRunner(db!),
+          knowledgeSource: new PrismaKnowledgeSource(db!),
           loadConversation: (user, conversationId) => loadAuthorizedConversation(user, conversationId, db!),
           runWithAnalysisLock: (businessId, conversationId, work) =>
             withAnalysisRunLock(businessId, conversationId, work, db!),

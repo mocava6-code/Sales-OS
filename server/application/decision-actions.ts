@@ -26,6 +26,7 @@ import {
   rejectDecisionSchema,
 } from "@/lib/validations/decision";
 import type { AIProvider } from "@/server/intelligence/ai-provider";
+import type { KnowledgeSource } from "@/server/intelligence/knowledge-source";
 import { analyzeConversationAndCreateDecisions } from "@/server/orchestration/analyze-conversation-and-create-decisions";
 import { approveDecision, executeDecision, recordAdvisorOverride, rejectDecision } from "@/server/orchestration/decision-workflows";
 import {
@@ -50,7 +51,7 @@ import {
 import { buildEngineInputFromConversation } from "./analyze-conversation-input";
 import { withAnalysisRunLock } from "./analysis-run-lock";
 import { type AuthContextResolver, type AuthenticatedUser, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
-import { getAIProvider, getTransactionRunner } from "./composition-root";
+import { getAIProvider, getKnowledgeSource, getTransactionRunner } from "./composition-root";
 import {
   type AnalyzeConversationSummaryDTO,
   type DecisionSummaryDTO,
@@ -72,6 +73,8 @@ export interface AnalyzeActionDependencies {
   resolver?: AuthContextResolver;
   transactionRunner?: TransactionRunner;
   aiProvider?: AIProvider;
+  /** Defaults to getKnowledgeSource() (real, OWNER-approved KnowledgeItem retrieval). */
+  knowledgeSource?: KnowledgeSource;
   /** Defaults to loadAuthorizedConversation (real Prisma lookup, tenant-scoped). */
   loadConversation?: (user: AuthenticatedUser, conversationId: string) => Promise<AuthorizedConversation>;
   /** Defaults to withAnalysisRunLock (real Postgres unique-constraint guard). */
@@ -263,6 +266,7 @@ export function analyzeConversationHandler(
     // that was going to fail at the lookup anyway.
     const aiProvider = dependencies.aiProvider ?? getAIProvider();
     const transactionRunner = dependencies.transactionRunner ?? getTransactionRunner();
+    const knowledgeSource = dependencies.knowledgeSource ?? getKnowledgeSource();
     const runWithAnalysisLock = dependencies.runWithAnalysisLock ?? withAnalysisRunLock;
 
     const result = await runWithAnalysisLock(user.businessId, conversation.id, () =>
@@ -272,7 +276,7 @@ export function analyzeConversationHandler(
           conversationId: conversation.id,
           conversationIntelligenceInput: engineInput,
         },
-        { aiProvider, transactionRunner },
+        { aiProvider, transactionRunner, knowledgeSource },
       ),
     );
 
