@@ -13,6 +13,7 @@
 
 import type { ConversationStatus, LeadPriority, LeadStatus, UserRole } from "@/server/db/generated/client";
 import type { ConversationCommercialState, NextActionType, PaymentStatus } from "@/server/intelligence/lead-commercial-state/types";
+import type { ObservationType } from "@/server/intelligence/observation/types";
 
 /** Standard rendering for "we don't have this information" — never "Desconocido". */
 export const UNKNOWN_LABEL = "Sin información";
@@ -141,6 +142,64 @@ export const OUTCOME_TYPE_LABELS: Record<string, string> = {
   SALE_CLOSED: "Venta cerrada",
   SALE_LOST: "Venta perdida",
   ABANDONED: "Abandonado",
+};
+
+/**
+ * Business-facing Spanish for the Observation Engine's raw ObservationType
+ * enum — distinct from server/observer-console/detector-registry.ts's
+ * DETECTOR_REGISTRY, which is deliberately technical/English (internal
+ * tooling metadata, never shown to a real user). This is the label a
+ * salesperson or owner actually sees on a lead page.
+ */
+export const OBSERVATION_TYPE_LABELS: Record<ObservationType, string> = {
+  PRICE_REQUEST: "Preguntó el precio",
+  COMPATIBILITY_QUESTION: "Preguntó si es compatible",
+  INSTALLATION_QUESTION: "Preguntó por instalación",
+  CUSTOMER_GHOSTED: "Dejó de responder",
+  PHOTO_REQUEST: "Pidió una foto",
+  DISCOUNT_NEGOTIATION: "Pidió un descuento",
+  QUOTE_REQUEST: "Pidió una cotización",
+  AVAILABILITY_REQUEST: "Preguntó si hay stock",
+  DELIVERY_TIME_REQUEST: "Preguntó el tiempo de entrega",
+  PAYMENT_METHOD_REQUEST: "Preguntó cómo pagar",
+  PRICE_OBJECTION: "Le pareció caro",
+  AVAILABILITY_FRICTION: "No había stock",
+  DELIVERY_LOCATION_FRICTION: "No llega a su zona",
+  INSTALLATION_FRICTION: "No se ofrece instalación",
+  TRUST_FRICTION: "Dudó de la confianza del negocio",
+  TIMING_FRICTION: "Se quejó de la demora",
+  LIMA_MENTIONED: "Mencionó Lima",
+  PROVINCE_MENTIONED: "Mencionó una provincia",
+};
+
+/**
+ * Groups ObservationType into the same three families the engine's own
+ * type definitions already use (see server/intelligence/observation/types.ts
+ * section comments) — drives badge color, never detection logic itself.
+ * "friction" is the one family worth visually flagging as needing
+ * attention; "intent" and "geography" are neutral/informational.
+ */
+export type ObservationSignalFamily = "friction" | "intent" | "geography";
+
+export const OBSERVATION_TYPE_FAMILY: Record<ObservationType, ObservationSignalFamily> = {
+  PRICE_REQUEST: "intent",
+  COMPATIBILITY_QUESTION: "intent",
+  INSTALLATION_QUESTION: "intent",
+  CUSTOMER_GHOSTED: "friction",
+  PHOTO_REQUEST: "intent",
+  DISCOUNT_NEGOTIATION: "intent",
+  QUOTE_REQUEST: "intent",
+  AVAILABILITY_REQUEST: "intent",
+  DELIVERY_TIME_REQUEST: "intent",
+  PAYMENT_METHOD_REQUEST: "intent",
+  PRICE_OBJECTION: "friction",
+  AVAILABILITY_FRICTION: "friction",
+  DELIVERY_LOCATION_FRICTION: "friction",
+  INSTALLATION_FRICTION: "friction",
+  TRUST_FRICTION: "friction",
+  TIMING_FRICTION: "friction",
+  LIMA_MENTIONED: "geography",
+  PROVINCE_MENTIONED: "geography",
 };
 
 export const OBSERVER_EVENT_TYPE_LABELS: Record<string, string> = {

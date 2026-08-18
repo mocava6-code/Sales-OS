@@ -12,6 +12,8 @@ import { formatDate, formatDateTime } from "@/lib/copy/format";
 import { CONVERSATION_STATUS_LABELS } from "@/lib/copy/labels";
 import { RecordOutcomeSheet } from "@/components/outcomes/RecordOutcomeSheet";
 import { AnalyzeConversationButton } from "@/components/leads/AnalyzeConversationButton";
+import { LeadSignalsCard } from "@/components/leads/LeadSignalsCard";
+import { getLeadSignals } from "@/server/services/lead-signal-service";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -36,6 +38,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
   const pendingFollowUps = lead.followUps.filter((f) => f.status === "PENDING");
   const otherFollowUps = lead.followUps.filter((f) => f.status !== "PENDING");
+  const signals = lead.conversations.length > 0 ? await getLeadSignals(lead.id, user.businessId) : [];
 
   return (
     <div className="space-y-6">
@@ -72,6 +75,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {commercialState && <LeadCommercialStateCard state={commercialState} />}
+
+      <LeadSignalsCard signals={signals} />
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-neutral-500">Seguimientos</h2>
