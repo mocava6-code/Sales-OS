@@ -4,6 +4,7 @@ import { getKoriConversionIntelligence } from "@/server/services/conversion-inte
 import { getKoriInsights } from "@/server/services/kori-insights-service";
 import { resolveKoriDateToken, KORI_DEFAULT_TIMEZONE } from "@/server/kori/date-interpretation";
 import { KoriPulseHeader } from "@/components/kori/KoriPulseHeader";
+import { HistoricalImportNudge } from "@/components/kori/HistoricalImportNudge";
 import { KoriInsights } from "@/components/kori/KoriInsights";
 import { KoriStatStrip } from "@/components/kori/KoriStatStrip";
 import { KoriOpportunitiesList } from "@/components/kori/KoriOpportunitiesList";
@@ -42,7 +43,9 @@ export default async function KoriPage() {
         commercialConversationsThisMonth={conversionSummary.commercialConversations}
       />
 
-      <KoriInsights insights={insights} canImportHistory={user.role === "OWNER"} />
+      <HistoricalImportNudge show={insights.showHistoricalImportNudge && user.role === "OWNER"} />
+
+      <KoriInsights insights={insights} />
 
       <KoriStatStrip stats={briefing.stats} />
 

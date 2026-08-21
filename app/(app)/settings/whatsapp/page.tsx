@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { WhatsAppPhoneNumberPanel } from "@/components/settings/WhatsAppPhoneNumberPanel";
 import { toWhatsAppPhoneNumberDTO } from "@/server/application/dto";
 import { listWhatsAppPhoneNumbers } from "@/server/whatsapp/phone-numbers";
+import { prisma } from "@/server/db/client";
 
 export default async function WhatsAppSettingsPage() {
   const user = await verifySession();
@@ -18,6 +19,7 @@ export default async function WhatsAppSettingsPage() {
   }
 
   const numbers = (await listWhatsAppPhoneNumbers(user.businessId)).map(toWhatsAppPhoneNumberDTO);
+  const importedConversationsCount = await prisma.importedConversation.count({ where: { businessId: user.businessId } });
 
   return (
     <div className="space-y-4">
@@ -30,13 +32,25 @@ export default async function WhatsAppSettingsPage() {
       <WhatsAppPhoneNumberPanel />
 
       <Link href="/settings/whatsapp/import" className="block">
-        <Card className="flex items-center justify-between">
-          <div>
-            <p className="font-medium text-neutral-900">Importar historial de chat</p>
-            <p className="text-sm text-neutral-500">Carga clientes y conversaciones desde un chat de WhatsApp exportado</p>
+        {importedConversationsCount === 0 ? (
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+            <div>
+              <p className="font-semibold text-indigo-900">📥 Importa tu historial de chat</p>
+              <p className="text-sm text-indigo-800">
+                Antes de empezar, carga tus conversaciones anteriores para que Kori conozca a tus clientes desde el primer mensaje.
+              </p>
+            </div>
+            <span className="shrink-0 text-sm font-medium text-indigo-700">→</span>
           </div>
-          <span className="text-neutral-400">→</span>
-        </Card>
+        ) : (
+          <Card className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-neutral-900">Importar historial de chat</p>
+              <p className="text-sm text-neutral-500">Carga clientes y conversaciones desde un chat de WhatsApp exportado</p>
+            </div>
+            <span className="text-neutral-400">→</span>
+          </Card>
+        )}
       </Link>
 
       <div className="space-y-2">
