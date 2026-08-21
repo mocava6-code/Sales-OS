@@ -18,12 +18,21 @@ export default async function SettingsPage() {
       </Card>
 
       {user.role === "OWNER" && (
-        <Link href="/settings/whatsapp" className="block">
-          <Card className="flex items-center justify-between">
-            <p className="font-medium text-neutral-900">Números de WhatsApp</p>
-            <span className="text-neutral-400">→</span>
-          </Card>
-        </Link>
+        <>
+          <Link href="/settings/whatsapp" className="block">
+            <Card className="flex items-center justify-between">
+              <p className="font-medium text-neutral-900">Números de WhatsApp</p>
+              <span className="text-neutral-400">→</span>
+            </Card>
+          </Link>
+
+          <Link href="/settings/team" className="block">
+            <Card className="flex items-center justify-between">
+              <p className="font-medium text-neutral-900">Rendimiento del equipo</p>
+              <span className="text-neutral-400">→</span>
+            </Card>
+          </Link>
+        </>
       )}
 
       <form action={signOutAction}>
