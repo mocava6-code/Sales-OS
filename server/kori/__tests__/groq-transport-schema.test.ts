@@ -270,3 +270,75 @@ describe("transportToKoriQuerySpecJson", () => {
     expect(spec.sort).toBeUndefined();
   });
 });
+
+// Regression coverage for a third real production failure: Groq generated
+// the bare `{"unsupported": true}` for an adversarial question — correct
+// SEMANTICS, wrong WIRE FORMAT. Strict mode rejected it because the root
+// schema's `required` list (unsupported, operation, filters, groupBy,
+// sort, limit) was violated — a bare unsupported sentinel is missing 5 of
+// 6 required root keys. The fix is prompt-only (nl-query-parser.ts no
+// longer tells the model to shorten to `{"unsupported": true}`); the
+// schema itself already required every root key and already made
+// `operation` nullable before this fix.
+describe("unsupported wire-format completeness — the third production failure", () => {
+  const groqSchema = buildKoriGroqTransportJsonSchema();
+  const rootRequired = (groqSchema.schema as { required: string[] }).required;
+
+  function hasEveryRequiredRootKey(candidate: Record<string, unknown>): boolean {
+    return rootRequired.every((key) => key in candidate);
+  }
+
+  const fullUnsupportedShape = {
+    unsupported: true,
+    operation: null,
+    filters: {
+      vehicleBrand: null,
+      vehicleModel: null,
+      vehicleYear: null,
+      productInterest: null,
+      customerType: null,
+      needsReply: null,
+      overdueFollowUp: null,
+      leadStatus: null,
+      priority: null,
+      assignedAgentId: null,
+      createdFrom: null,
+      createdTo: null,
+      lastActivityBefore: null,
+      lastActivityAfter: null,
+      outcomeType: null,
+    },
+    groupBy: null,
+    sort: null,
+    limit: null,
+  };
+
+  it("the exact real production output {\"unsupported\": true} violates the schema's own required-key list", () => {
+    expect(hasEveryRequiredRootKey({ unsupported: true })).toBe(false);
+  });
+
+  it("the full unsupported wire-format shape satisfies every required root key", () => {
+    expect(hasEveryRequiredRootKey(fullUnsupportedShape)).toBe(true);
+  });
+
+  it("operation is nullable in the schema (needed so unsupported=true can validly set operation=null)", () => {
+    const operationNode = findSchemaNode(groqSchema.schema, ["properties", "operation"]) as { type?: unknown; enum?: unknown[] };
+    expect(Array.isArray(operationNode.type) && (operationNode.type as string[]).includes("null")).toBe(true);
+    expect(operationNode.enum).toContain(null);
+  });
+
+  it("transportToKoriQuerySpecJson checks unsupported=true BEFORE requiring/interpreting operation, for both the full shape and the broken bare shape", () => {
+    expect(() => transportToKoriQuerySpecJson(fullUnsupportedShape)).toThrow(UnsupportedKoriQuestionError);
+    // Even the literal broken production shape — if it ever did reach our
+    // code (e.g. via json_object/loose mode, which has no schema
+    // enforcement) — must still resolve to a controlled rejection, not a
+    // crash or a wrongly-accepted query.
+    expect(() => transportToKoriQuerySpecJson({ unsupported: true })).toThrow(UnsupportedKoriQuestionError);
+  });
+
+  it("unsupported=false with operation=null (a malformed 'supported' response) is still rejected by parseKoriQuerySpec — operation remains required", () => {
+    const malformed = { ...fullUnsupportedShape, unsupported: false };
+    const loose = transportToKoriQuerySpecJson(malformed);
+    expect(() => parseKoriQuerySpec(loose)).toThrow();
+  });
+});
