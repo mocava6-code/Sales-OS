@@ -26,6 +26,13 @@ export const LOST_REASON_LABELS: Record<LostReason, string> = {
   OTRO: "Otro",
 };
 
+// Kori Sales Memory ROI attribution — deliberately only the two attributions
+// a human can actually assert firsthand ("this outcome followed Kori's open
+// recommendation" vs "it didn't"). UNATTRIBUTED is never sent from the
+// client; it's the service's own default when no decision is linked at all.
+export const conversationOutcomeAttributionSchema = z.enum(["KORI_RECOMMENDATION", "ADVISOR_ALTERNATIVE"]);
+export type ConversationOutcomeAttribution = z.infer<typeof conversationOutcomeAttributionSchema>;
+
 export const recordConversationOutcomeSchema = z
   .object({
     conversationId: z.string().min(1, { error: "Se requiere un id de conversación." }),
@@ -33,10 +40,18 @@ export const recordConversationOutcomeSchema = z
     lostReason: lostReasonSchema.optional(),
     productSold: z.string().trim().max(200).optional(),
     notes: z.string().trim().max(2000).optional(),
+    // Present only when the lead page found an open DecisionRecord for this
+    // conversation and the advisor chose to link this outcome to it.
+    decisionRecordId: z.string().min(1).optional(),
+    attribution: conversationOutcomeAttributionSchema.optional(),
   })
   .refine((data) => data.outcomeType !== "SALE_LOST" || data.lostReason !== undefined, {
     error: "Selecciona por qué se perdió la venta.",
     path: ["lostReason"],
+  })
+  .refine((data) => !data.decisionRecordId || data.attribution !== undefined, {
+    error: "Indica si este resultado fue por la recomendación de Kori.",
+    path: ["attribution"],
   });
 
 export type RecordConversationOutcomeInput = z.infer<typeof recordConversationOutcomeSchema>;

@@ -1,14 +1,18 @@
 // Gated: proves recordConversationOutcome (Kori Sales Memory v1's lightweight
 // "Marcar resultado" write path) against real Postgres — writes a decision-less
-// Outcome row with UNATTRIBUTED attribution, the exact fields passed through,
-// and never touches decisionRecordId.
+// Outcome row with UNATTRIBUTED attribution by default, the exact fields
+// passed through, and (since the decision-attribution linking work) an
+// optional decisionRecordId + attribution when the caller supplies both.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildKoriDecision } from "../../intelligence/testing/fixtures";
+import { PrismaDecisionRepository } from "../../persistence/prisma/prisma-decision-repository";
 import { recordConversationOutcome } from "../outcome-service";
 import { cleanupTestFixture, createTestFixture, getTestPrisma, shouldRunDbTests, type TestFixture } from "../../persistence/__tests__/test-db";
 
 describe.skipIf(!shouldRunDbTests)("recordConversationOutcome (RUN_DB_TESTS=true)", () => {
   const db = shouldRunDbTests ? getTestPrisma() : undefined;
+  const decisionRepo = db ? new PrismaDecisionRepository(db) : undefined;
   let fixture: TestFixture;
 
   beforeEach(async () => {
@@ -86,7 +90,34 @@ describe.skipIf(!shouldRunDbTests)("recordConversationOutcome (RUN_DB_TESTS=true
     expect(count).toBe(2);
   });
 
-  it("5. tenant isolation — an outcome recorded for one business never leaks into another business's count", async () => {
+  it("5. links to a DecisionRecord with the given attribution, when both are provided", async () => {
+    const decision = buildKoriDecision({ metadata: { ...buildKoriDecision().metadata, conversationId: fixture.conversationId } });
+    const saved = await decisionRepo!.save({ businessId: fixture.businessId, decision });
+
+    const result = await recordConversationOutcome(
+      fixture.businessId,
+      fixture.conversationId,
+      fixture.userId,
+      {
+        outcomeType: "SALE_CLOSED",
+        lostReason: undefined,
+        productSold: undefined,
+        notes: undefined,
+        decisionRecordId: saved.id,
+        attribution: "KORI_RECOMMENDATION",
+      },
+      db!,
+    );
+
+    expect(result.decisionRecordId).toBe(saved.id);
+    expect(result.attribution).toBe("KORI_RECOMMENDATION");
+
+    const stored = await db!.outcome.findUnique({ where: { id: result.id } });
+    expect(stored?.decisionRecordId).toBe(saved.id);
+    expect(stored?.attribution).toBe("KORI_RECOMMENDATION");
+  });
+
+  it("7. tenant isolation — an outcome recorded for one business never leaks into another business's count", async () => {
     const otherFixture = await createTestFixture(db!, "record-conversation-outcome-other");
     try {
       await recordConversationOutcome(

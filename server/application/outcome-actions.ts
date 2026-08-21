@@ -9,7 +9,7 @@ import type { z } from "zod";
 import { recordConversationOutcomeSchema } from "@/lib/validations/outcome";
 import { recordConversationOutcome } from "@/server/services/outcome-service";
 import { type AuthContextResolver, defaultAuthContextResolver, requireAuthenticatedUser } from "./auth";
-import { loadAuthorizedConversation } from "./access-control";
+import { loadAuthorizedConversation, loadAuthorizedDecisionRecord } from "./access-control";
 import { InvalidInputError, type ApplicationResult, toApplicationResult } from "./errors";
 import { toConversationOutcomeDTO, type ConversationOutcomeDTO } from "./dto";
 
@@ -35,11 +35,24 @@ export function recordConversationOutcomeHandler(
 
     const conversation = await loadAuthorizedConversation(user, input.conversationId);
 
+    // A decisionRecordId is tenant-authorized like everything else here, plus
+    // one extra check specific to this link: it must belong to the very
+    // conversation the outcome is about, not just this business — otherwise
+    // an advisor could attribute a sale to an unrelated customer's decision.
+    if (input.decisionRecordId) {
+      const decision = await loadAuthorizedDecisionRecord(user, input.decisionRecordId);
+      if (decision.conversationId !== conversation.id) {
+        throw new InvalidInputError({ decisionRecordId: ["Esta decisión no pertenece a esta conversación."] });
+      }
+    }
+
     const outcome = await recordConversationOutcome(user.businessId, conversation.id, user.id, {
       outcomeType: input.outcomeType,
       lostReason: input.lostReason,
       productSold: input.productSold,
       notes: input.notes,
+      decisionRecordId: input.decisionRecordId,
+      attribution: input.attribution,
     });
 
     return toConversationOutcomeDTO(outcome);

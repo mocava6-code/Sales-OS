@@ -15,7 +15,9 @@ import type { RecordConversationOutcomeInput } from "@/lib/validations/outcome";
 export interface ConversationOutcome {
   id: string;
   conversationId: string;
+  decisionRecordId: string | null;
   outcomeType: string;
+  attribution: string | null;
   lostReason: string | null;
   productSold: string | null;
   notes: string | null;
@@ -26,7 +28,7 @@ export async function recordConversationOutcome(
   businessId: string,
   conversationId: string,
   recordedByUserId: string,
-  input: Pick<RecordConversationOutcomeInput, "outcomeType" | "lostReason" | "productSold" | "notes">,
+  input: Pick<RecordConversationOutcomeInput, "outcomeType" | "lostReason" | "productSold" | "notes" | "decisionRecordId" | "attribution">,
   db: PrismaClient = prisma,
 ): Promise<ConversationOutcome> {
   const outcome = await db.outcome.create({
@@ -34,8 +36,13 @@ export async function recordConversationOutcome(
       businessId,
       conversationId,
       recordedByUserId,
+      decisionRecordId: input.decisionRecordId,
       outcomeType: input.outcomeType,
-      attribution: "UNATTRIBUTED",
+      // A linked decision always carries the advisor's explicit call
+      // (KORI_RECOMMENDATION or ADVISOR_ALTERNATIVE — enforced by the Zod
+      // schema); UNATTRIBUTED only ever applies when there's no decision to
+      // attribute to at all.
+      attribution: input.decisionRecordId ? input.attribution : "UNATTRIBUTED",
       lostReason: input.lostReason,
       productSold: input.productSold,
       notes: input.notes,
@@ -45,7 +52,9 @@ export async function recordConversationOutcome(
   return {
     id: outcome.id,
     conversationId: outcome.conversationId,
+    decisionRecordId: outcome.decisionRecordId,
     outcomeType: outcome.outcomeType,
+    attribution: outcome.attribution,
     lostReason: outcome.lostReason,
     productSold: outcome.productSold,
     notes: outcome.notes,

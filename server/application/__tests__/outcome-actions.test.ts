@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { buildKoriDecision } from "../../intelligence/testing/fixtures";
+import type { SavedDecisionRecord } from "../../persistence/types";
 import { NotFoundError } from "../errors";
 import { createFakeAuthContextResolver } from "../testing/fake-auth";
 
-vi.mock("../access-control", () => ({ loadAuthorizedConversation: vi.fn() }));
+vi.mock("../access-control", () => ({ loadAuthorizedConversation: vi.fn(), loadAuthorizedDecisionRecord: vi.fn() }));
 vi.mock("../../services/outcome-service", () => ({ recordConversationOutcome: vi.fn() }));
 
-const { loadAuthorizedConversation } = await import("../access-control");
+const { loadAuthorizedConversation, loadAuthorizedDecisionRecord } = await import("../access-control");
 const { recordConversationOutcome } = await import("../../services/outcome-service");
 const { recordConversationOutcomeHandler } = await import("../outcome-actions");
 
@@ -19,11 +21,25 @@ function fakeOutcome(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "outcome-1",
     conversationId: "conv-1",
+    decisionRecordId: null,
     outcomeType: "SALE_CLOSED",
+    attribution: "UNATTRIBUTED",
     lostReason: null,
     productSold: null,
     notes: null,
     occurredAt: new Date("2026-08-13T10:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function fakeDecision(overrides: Partial<SavedDecisionRecord> = {}): SavedDecisionRecord {
+  return {
+    id: "decision-1",
+    businessId: "biz-real-tenant",
+    conversationId: "conv-1",
+    conversationSnapshotId: null,
+    decision: buildKoriDecision(),
+    createdAt: new Date("2026-08-13T09:00:00.000Z"),
     ...overrides,
   };
 }
@@ -134,7 +150,69 @@ describe("recordConversationOutcomeHandler — successful execution", () => {
     );
 
     const call = vi.mocked(recordConversationOutcome).mock.calls[0];
-    expect(call[3]).toEqual({ outcomeType: "SALE_CLOSED", lostReason: undefined, productSold: "Kit TRAVO", notes: "Pagó al contado." });
+    expect(call[3]).toEqual({
+      outcomeType: "SALE_CLOSED",
+      lostReason: undefined,
+      productSold: "Kit TRAVO",
+      notes: "Pagó al contado.",
+      decisionRecordId: undefined,
+      attribution: undefined,
+    });
+  });
+});
+
+describe("recordConversationOutcomeHandler — decision attribution linking", () => {
+  it("requires attribution when a decisionRecordId is given", async () => {
+    const resolver = createFakeAuthContextResolver(advisor);
+
+    const result = await recordConversationOutcomeHandler(
+      { conversationId: "conv-1", outcomeType: "SALE_CLOSED", decisionRecordId: "decision-1" },
+      { resolver },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+  });
+
+  it("rejects a decisionRecordId that belongs to a different conversation", async () => {
+    vi.mocked(loadAuthorizedConversation).mockReset();
+    vi.mocked(loadAuthorizedDecisionRecord).mockReset();
+    vi.mocked(loadAuthorizedConversation).mockResolvedValue(fakeConversation());
+    vi.mocked(loadAuthorizedDecisionRecord).mockResolvedValue(fakeDecision({ conversationId: "conv-other" }));
+    const resolver = createFakeAuthContextResolver(advisor);
+
+    const result = await recordConversationOutcomeHandler(
+      { conversationId: "conv-1", outcomeType: "SALE_CLOSED", decisionRecordId: "decision-1", attribution: "KORI_RECOMMENDATION" },
+      { resolver },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+  });
+
+  it("passes decisionRecordId and attribution through to the service once the decision is verified", async () => {
+    vi.mocked(loadAuthorizedConversation).mockReset();
+    vi.mocked(loadAuthorizedDecisionRecord).mockReset();
+    vi.mocked(recordConversationOutcome).mockReset();
+    vi.mocked(loadAuthorizedConversation).mockResolvedValue(fakeConversation());
+    vi.mocked(loadAuthorizedDecisionRecord).mockResolvedValue(fakeDecision());
+    vi.mocked(recordConversationOutcome).mockResolvedValue(fakeOutcome({ decisionRecordId: "decision-1", attribution: "KORI_RECOMMENDATION" }));
+    const resolver = createFakeAuthContextResolver(advisor);
+
+    await recordConversationOutcomeHandler(
+      { conversationId: "conv-1", outcomeType: "SALE_CLOSED", decisionRecordId: "decision-1", attribution: "KORI_RECOMMENDATION" },
+      { resolver },
+    );
+
+    const call = vi.mocked(recordConversationOutcome).mock.calls[0];
+    expect(call[3]).toEqual({
+      outcomeType: "SALE_CLOSED",
+      lostReason: undefined,
+      productSold: undefined,
+      notes: undefined,
+      decisionRecordId: "decision-1",
+      attribution: "KORI_RECOMMENDATION",
+    });
   });
 });
 

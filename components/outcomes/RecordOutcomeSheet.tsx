@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TextField, TextAreaField } from "@/components/ui/Field";
-import { LOST_REASONS, LOST_REASON_LABELS, type ConversationOutcomeType, type LostReason } from "@/lib/validations/outcome";
+import {
+  LOST_REASONS,
+  LOST_REASON_LABELS,
+  type ConversationOutcomeAttribution,
+  type ConversationOutcomeType,
+  type LostReason,
+} from "@/lib/validations/outcome";
 import { recordConversationOutcomeAction, suggestConversationOutcomeAction } from "@/server/actions/outcomes";
 import type { OutcomeSuggestion } from "@/server/kori/outcome-suggestion-types";
 
@@ -24,11 +30,21 @@ const SUGGESTION_LABEL: Record<OutcomeSuggestion["suggestedOutcomeType"], string
 
 type ViewState = { kind: "CLOSED" } | { kind: "CHOOSING" } | { kind: "DETAILS"; outcomeType: ConversationOutcomeType } | { kind: "DONE" };
 
-export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conversationId: string; suggestedProduct: string | null }) {
+export function RecordOutcomeSheet({
+  conversationId,
+  suggestedProduct,
+  openDecision,
+}: {
+  conversationId: string;
+  suggestedProduct: string | null;
+  /** The conversation's still-live DecisionRecord, if one exists — lets a sale be attributed to it instead of always UNATTRIBUTED. */
+  openDecision: { id: string; title: string } | null;
+}) {
   const [view, setView] = useState<ViewState>({ kind: "CLOSED" });
   const [lostReason, setLostReason] = useState<LostReason | null>(null);
   const [productSold, setProductSold] = useState(suggestedProduct ?? "");
   const [notes, setNotes] = useState("");
+  const [attribution, setAttribution] = useState<ConversationOutcomeAttribution | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   // Fase C: a best-effort "Kori sugiere" hint, fetched independently of
@@ -43,6 +59,7 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
     setLostReason(null);
     setProductSold(suggestedProduct ?? "");
     setNotes("");
+    setAttribution(null);
     setError(null);
     setSuggestion(null);
   }
@@ -69,9 +86,15 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
     }
   }
 
+  const linkableToDecision = openDecision !== null && (view.kind === "DETAILS" ? view.outcomeType !== "NOT_AN_OPPORTUNITY" : false);
+
   function submit(outcomeType: ConversationOutcomeType) {
     if (outcomeType === "SALE_LOST" && !lostReason) {
       setError("Selecciona por qué se perdió la venta.");
+      return;
+    }
+    if (linkableToDecision && !attribution) {
+      setError("Indica si este resultado fue por la recomendación de Kori.");
       return;
     }
     setError(null);
@@ -83,6 +106,8 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
         lostReason: outcomeType === "SALE_LOST" ? lostReason : undefined,
         productSold: outcomeType === "SALE_CLOSED" && productSold.trim() ? productSold.trim() : undefined,
         notes: notes.trim() || undefined,
+        decisionRecordId: linkableToDecision ? openDecision.id : undefined,
+        attribution: linkableToDecision ? (attribution ?? undefined) : undefined,
       });
 
       if (!result.ok) {
@@ -182,6 +207,33 @@ export function RecordOutcomeSheet({ conversationId, suggestedProduct }: { conve
           value={productSold}
           onChange={(e) => setProductSold(e.target.value)}
         />
+      )}
+
+      {view.kind === "DETAILS" && linkableToDecision && openDecision && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-neutral-700">¿Fue resultado de la recomendación de Kori?</p>
+          <p className="text-xs text-neutral-500">{openDecision.title}</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAttribution("KORI_RECOMMENDATION")}
+              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium ${
+                attribution === "KORI_RECOMMENDATION" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-300 text-neutral-600"
+              }`}
+            >
+              Sí, la de Kori
+            </button>
+            <button
+              type="button"
+              onClick={() => setAttribution("ADVISOR_ALTERNATIVE")}
+              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium ${
+                attribution === "ADVISOR_ALTERNATIVE" ? "border-neutral-900 bg-neutral-900 text-white" : "border-neutral-300 text-neutral-600"
+              }`}
+            >
+              No, fue otra acción
+            </button>
+          </div>
+        </div>
       )}
 
       {view.kind === "DETAILS" && (

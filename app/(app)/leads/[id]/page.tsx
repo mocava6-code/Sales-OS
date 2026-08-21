@@ -14,6 +14,15 @@ import { RecordOutcomeSheet } from "@/components/outcomes/RecordOutcomeSheet";
 import { AnalyzeConversationButton } from "@/components/leads/AnalyzeConversationButton";
 import { LeadSignalsCard } from "@/components/leads/LeadSignalsCard";
 import { getLeadSignals } from "@/server/services/lead-signal-service";
+import { PrismaDecisionRepository } from "@/server/persistence/prisma/prisma-decision-repository";
+
+// A decision an outcome can honestly be attributed to Kori for — a rejected,
+// overridden, or cancelled decision never had its recommendation executed,
+// so linking one of those would let "Sí, la de Kori" claim credit for
+// something that didn't happen (see server/orchestration/
+// outcome-attribution-policy.ts, which enforces the same rule for the
+// decision-required workflow path this lightweight one deliberately skips).
+const LINKABLE_DECISION_STATUSES = new Set(["PROPOSED", "APPROVED", "EXECUTED"]);
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,6 +48,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const pendingFollowUps = lead.followUps.filter((f) => f.status === "PENDING");
   const otherFollowUps = lead.followUps.filter((f) => f.status !== "PENDING");
   const signals = lead.conversations.length > 0 ? await getLeadSignals(lead.id, user.businessId) : [];
+
+  let openDecision: { id: string; title: string } | null = null;
+  if (lead.conversations.length > 0) {
+    const decisions = await new PrismaDecisionRepository().listForConversation(lead.conversations[0].id);
+    const latestLinkable = [...decisions].reverse().find((d) => LINKABLE_DECISION_STATUSES.has(d.decision.status));
+    openDecision = latestLinkable ? { id: latestLinkable.id, title: latestLinkable.decision.title } : null;
+  }
 
   return (
     <div className="space-y-6">
@@ -69,7 +85,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
       {lead.conversations.length > 0 && (
         <>
-          <RecordOutcomeSheet conversationId={lead.conversations[0].id} suggestedProduct={commercialState?.productInterest.value ?? null} />
+          <RecordOutcomeSheet
+            conversationId={lead.conversations[0].id}
+            suggestedProduct={commercialState?.productInterest.value ?? null}
+            openDecision={openDecision}
+          />
           <AnalyzeConversationButton conversationId={lead.conversations[0].id} />
         </>
       )}
