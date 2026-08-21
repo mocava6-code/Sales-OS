@@ -202,6 +202,15 @@ export const OBSERVATION_TYPE_FAMILY: Record<ObservationType, ObservationSignalF
   PROVINCE_MENTIONED: "geography",
 };
 
+/** PendingWhatsAppMessage.status — first UI consumer is DecisionDraftReply.tsx (queue/approve/send a decision's draft reply). */
+export const PENDING_WHATSAPP_MESSAGE_STATUS_LABELS: Record<string, string> = {
+  WAITING_APPROVAL: "Esperando tu aprobación",
+  READY: "Lista para enviar",
+  SENT: "Enviada",
+  FAILED: "No se pudo enviar",
+  CANCELLED: "Rechazada",
+};
+
 export const OBSERVER_EVENT_TYPE_LABELS: Record<string, string> = {
   CONVERSATION_CREATED: "Conversación creada",
   MESSAGE_RECEIVED: "Mensaje recibido",
