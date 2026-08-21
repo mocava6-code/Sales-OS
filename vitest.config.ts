@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.{ts,tsx}"],
+    include: ["server/**/*.test.ts", "lib/**/*.test.ts", "components/**/*.test.{ts,tsx}", "app/**/*.test.ts"],
     setupFiles: ["test/setup-rtl.ts"],
   },
 });
